@@ -19,12 +19,12 @@ class OneFuseManager(object):
 
     Example 1 - Make custom REST calls to OneFuse:
 
-        from onefuse_python.onefuse_admin import OneFuseManager
+        from onefuse.admin import OneFuseManager
         ofm = OneFuseManager(username, password, host)
         response = ofm.get("/namingPolicies/")
 
     Example 2 - Provision Naming with OOB methods:
-        from onefuse_python.onefuse_admin import OneFuseManager
+        from onefuse.admin import OneFuseManager
         ofm = OneFuseManager(username, password, host)
         naming_json = ofm.provision_naming(self, policy_name, properties_stack,
                                            tracking_id)
@@ -231,7 +231,8 @@ class OneFuseManager(object):
 
     # DNS Functions
     def provision_dns(self, policy_name: str, properties_stack: dict,
-                      ip_address: str, zones: list, tracking_id: str = ""):
+                      name: str, value: str, zones: list,
+                      tracking_id: str = ""):
         # Get DNS Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'dnsPolicies'
@@ -245,13 +246,11 @@ class OneFuseManager(object):
             rendered_zone = self.render(zone, properties_stack)
             rendered_zones.append(rendered_zone)
         # Request DNS
-        hostname = properties_stack["hostname"]
-        value = ip_address
         template = {
             "policy": policy_url,
             "templateProperties": properties_stack,
             "workspace": workspace_url,
-            "name": hostname,
+            "name": name,
             "value": value,
             "zones": rendered_zones
         }
@@ -266,7 +265,7 @@ class OneFuseManager(object):
 
     # IPAM Functions
     def provision_ipam(self, policy_name: str, properties_stack: dict,
-                       tracking_id: str = ""):
+                       hostname: str, tracking_id: str = ""):
         # Get IPAM Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'ipamPolicies'
@@ -276,7 +275,6 @@ class OneFuseManager(object):
         policy_url = links["self"]["href"]
         workspace_url = links["workspace"]["href"]
         # Request IPAM
-        hostname = properties_stack["hostname"]
         template = {
             "policy": policy_url,
             "templateProperties": properties_stack,
@@ -474,7 +472,6 @@ class OneFuseManager(object):
         self.deprovision_mo(path)
         return path
 
-    # ServiceNow CMDB Functions
     def provision_vra(self, policy_name: str, properties_stack: dict,
                       deployment_name: str, tracking_id: str = ""):
         # Get CMDB Policy by Name
@@ -607,9 +604,8 @@ class OneFuseManager(object):
         self.logger.debug(f'mo_json: {mo_json}')
         return mo_json
 
-
     def get_object_by_unique_field(self, policy_path: str, policy_name: str,
-                           field: str):
+                                   field: str):
         path = f'/{policy_path}/?filter={field}.iexact:"{policy_name}"'
         policies_response = self.get(path)
         policies_response.raise_for_status()
@@ -627,12 +623,10 @@ class OneFuseManager(object):
         policy_json = policies_json["_embedded"][policy_path][0]
         return policy_json
 
-
     def get_policy_by_name(self, policy_path: str, policy_name: str):
         policy_json = self.get_object_by_unique_field(policy_path, policy_name,
                                                       "name")
         return policy_json
-
 
     def deprovision_mo(self, path: str):
         tracking_id = self.get_tracking_id_from_mo(path)
