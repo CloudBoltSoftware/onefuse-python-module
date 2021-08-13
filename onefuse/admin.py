@@ -5,10 +5,14 @@ import requests
 import socket
 import logging
 from requests.auth import HTTPBasicAuth
-from .configuration.globals import STATIC_PROPERTY_SET_PREFIX, ROOT_PATH, \
-    LOG_LEVEL
+from os import path
 
+
+ROOT_PATH = path.dirname(path.dirname(path.dirname(path.abspath(__file__))))
 sys.path.append(ROOT_PATH)
+LOG_LEVEL = 'DEBUG'
+UPSTREAM_VERSION = '1.3.0'
+STATIC_PROPERTY_SET_PREFIX = 'OneFuse_SPS_'
 
 
 # noinspection DuplicatedCode,PyBroadException,PyShadowingNames
@@ -38,8 +42,7 @@ class OneFuseManager(object):
     - verify_certs - default False - Allows to specify whether or not to verify
         OneFuse certs
     - logger - allows you to pass in logger information. By default will log to
-        onefuse.log as well as to console at the LOG_LEVEL set in
-        configuration.globals
+        onefuse.log as well as to console at the DEBUG level
 
     Authentication, headers, and url creation is handled within this class,
     freeing the caller from having to deal with these tasks.
@@ -144,8 +147,24 @@ class OneFuseManager(object):
         return 'OneFuseManager'
 
     # AD Functions:
-    def provision_ad(self, policy_name: str, properties_stack: dict,
+    def provision_ad(self, policy_name: str, properties_stack: dict, name: str,
                      tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        name : str
+            The name of the Active Directory Computer object to be created
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get AD Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'microsoftADPolicies'
@@ -155,7 +174,6 @@ class OneFuseManager(object):
         policy_url = links["self"]["href"]
         workspace_url = links["workspace"]["href"]
         # Request AD
-        name = properties_stack["hostname"]
         template = {
             "policy": policy_url,
             "templateProperties": properties_stack,
@@ -167,15 +185,38 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_ad(self, ad_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/microsoftADComputerAccounts/{ad_id}/'
         self.deprovision_mo(path)
         return path
 
     def move_ou(self, ad_id: int):
+        """
+        Move an Active Directory object currently in the build state to the
+        final OU/state
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be moved
+        """
         path = f'/microsoftADComputerAccounts/{ad_id}/'
         get_response = self.get(path)
         get_response.raise_for_status()
         get_response = get_response.json()
+        state = get_response["state"]
+        if state != 'build':
+            msg = (f'Active Directory object is in {state} state this method '
+                   f'only moves objects from "build" to "final"')
+            raise Exception(msg)
+
         final_ou = get_response["finalOu"]
         name = get_response["name"]
         links = get_response["_links"]
@@ -194,6 +235,20 @@ class OneFuseManager(object):
     # Ansible Tower Functions
     def provision_ansible_tower(self, policy_name: str, properties_stack: dict,
                                 hosts: str, limit: str, tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get Ansible Tower Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'ansibleTowerPolicies'
@@ -225,6 +280,14 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_ansible_tower(self, at_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/ansibleTowerDeployments/{at_id}/'
         self.deprovision_mo(path)
         return path
@@ -233,6 +296,20 @@ class OneFuseManager(object):
     def provision_dns(self, policy_name: str, properties_stack: dict,
                       name: str, value: str, zones: list,
                       tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get DNS Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'dnsPolicies'
@@ -259,6 +336,14 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_dns(self, dns_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/dnsReservations/{dns_id}/'
         self.deprovision_mo(path)
         return path
@@ -266,6 +351,20 @@ class OneFuseManager(object):
     # IPAM Functions
     def provision_ipam(self, policy_name: str, properties_stack: dict,
                        hostname: str, tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get IPAM Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'ipamPolicies'
@@ -286,6 +385,14 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_ipam(self, ipam_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/ipamReservations/{ipam_id}/'
         self.deprovision_mo(path)
         return path
@@ -293,6 +400,20 @@ class OneFuseManager(object):
     # Naming Functions
     def provision_naming(self, policy_name: str, properties_stack: dict,
                          tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get Naming Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'namingPolicies'
@@ -312,6 +433,14 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_naming(self, name_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/customNames/{name_id}/'
         self.deprovision_mo(path)
         return path
@@ -363,6 +492,7 @@ class OneFuseManager(object):
         return sps_properties
 
     def get_sps_by_name(self, sps_name: str):
+
         path = f'/propertySets/?filter=name.iexact:"{sps_name}"'
         response = self.get(path)
         response.raise_for_status()
@@ -400,6 +530,20 @@ class OneFuseManager(object):
     # Scripting
     def provision_scripting(self, policy_name: str, properties_stack: dict,
                             tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get Scripting Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'scriptingPolicies'
@@ -419,6 +563,14 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_scripting(self, script_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/scriptingDeployments/{script_id}/'
         self.deprovision_mo(path)
         return path
@@ -426,6 +578,20 @@ class OneFuseManager(object):
     # ServiceNow CMDB Functions
     def provision_cmdb(self, policy_name: str, properties_stack: dict,
                        tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get CMDB Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         policy_path = 'servicenowCMDBPolicies'
@@ -445,6 +611,14 @@ class OneFuseManager(object):
         return response_json
 
     def update_cmdb(self, properties_stack: dict, cmdb_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         # Get Existing Object
         path = f'/servicenowCMDBDeployments/{cmdb_id}/'
         current_response = self.get(path)
@@ -462,18 +636,35 @@ class OneFuseManager(object):
         return response_json
 
     def deprovision_cmdb(self, cmdb_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
         path = f'/servicenowCMDBDeployments/{cmdb_id}/'
         self.deprovision_mo(path)
         return path
 
     # vRealize Automation Functions
-    def deprovision_vra(self, vra_id: int):
-        path = f'/vraDeployments/{vra_id}/'
-        self.deprovision_mo(path)
-        return path
-
     def provision_vra(self, policy_name: str, properties_stack: dict,
                       deployment_name: str, tracking_id: str = ""):
+        """
+        Provision an Active Directory Object
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Active Directory Policy Name
+        properties_stack : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
         # Get CMDB Policy by Name
         rendered_policy_name = self.render(policy_name, properties_stack)
         rendered_deployment_name = self.render(deployment_name,
@@ -496,6 +687,19 @@ class OneFuseManager(object):
         response_json = self.request(path, template, tracking_id,
                                      sleep_seconds=sleep_seconds)
         return response_json
+
+    def deprovision_vra(self, vra_id: int):
+        """
+        De-Provision an Active Directory Object
+
+        Parameters
+        ----------
+        ad_id : str
+            OneFuse ID of the Active Directory object to be de-provisioned
+        """
+        path = f'/vraDeployments/{vra_id}/'
+        self.deprovision_mo(path)
+        return path
 
     # Utilities common to all Python Platforms
     def render(self, template: str, properties_stack: dict):
@@ -667,40 +871,23 @@ class OneFuseManager(object):
     def get_max_sleep(self, path: str):
         try:
             if path == '/customNames/':
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_NAMING
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_NAMING
+                max_sleep = 10
             elif path == '/ipamReservations/':
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_IPAM
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_IPAM
+                max_sleep = 10
             elif path == '/dnsReservations/':
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_DNS
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_DNS
+                max_sleep = 10
             elif path == '/microsoftADComputerAccounts/':
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_AD
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_AD
+                max_sleep = 15
             elif path == '/scriptingDeployments/':
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_SCRIPTING
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_SCRIPTING
+                max_sleep = 90
             elif path == '/ansibleTowerDeployments/':
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_ANSIBLETOWER
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_ANSIBLETOWER
+                max_sleep = 120
             elif path == '/vraDeployments/':
-                from .configuration.globals import ONEFUSE_ASYNC_TIMEOUT_VRA
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_VRA
+                max_sleep = 120
             else:
-                from .configuration.globals import \
-                    ONEFUSE_ASYNC_TIMEOUT_OTHER
-                max_sleep = ONEFUSE_ASYNC_TIMEOUT_OTHER
+                max_sleep = 10
         except:
-            from .configuration.globals import \
-                ONEFUSE_ASYNC_TIMEOUT_OTHER
-            max_sleep = ONEFUSE_ASYNC_TIMEOUT_OTHER
+            max_sleep = 10
         max_sleep_seconds = max_sleep * 60
         self.logger.debug(f'max_sleep_seconds: {max_sleep_seconds}')
         return max_sleep_seconds
