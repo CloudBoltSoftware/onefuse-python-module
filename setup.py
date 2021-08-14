@@ -8,7 +8,7 @@ setup(
     author='Mike Bombard',
     author_email='mbombard@cloudbolt.io',
     packages=['onefuse'],
-    install_requires=['requests'],
+    install_requires=['requests', 'urllib3'],
 
     classifiers=[
         'Development Status :: 4 - Beta',
