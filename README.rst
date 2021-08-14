@@ -1,8 +1,23 @@
 Onefuse Python Module
 =====================
-
 This is a context manager class available to Python that facilitates
 easy API connectivity from a Python script host to a OneFuse host.
+
+Installation
+------------
+You will want to install the latest version that matches the version of your
+OneFuse appliance. To find available versions the following command will
+cause pip to throw an error showing available versions: ::
+
+    $pip install onefuse=versions
+
+To install the OneFuse Python Module by version: ::
+
+    $pip install onefuse==1.3.0
+
+To install the Latest OneFuse Python Module: ::
+
+    $ pip install onefuse
 
 Usage
 -----
