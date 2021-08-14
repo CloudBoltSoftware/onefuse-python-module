@@ -116,4 +116,5 @@ dmypy.json
 #PyCharm files
 .idea/
 
-onefuse_python/tests/templates.py
+tests/
+build/
