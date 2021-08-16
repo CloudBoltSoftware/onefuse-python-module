@@ -6,6 +6,7 @@ import socket
 import logging
 from requests.auth import HTTPBasicAuth
 from os import path
+from uuid import uuid1
 
 ROOT_PATH = path.dirname(path.dirname(path.dirname(path.abspath(__file__))))
 sys.path.append(ROOT_PATH)
@@ -1120,6 +1121,14 @@ class OneFuseManager(object):
         if tracking_id is not None and tracking_id != "":
             self.headers["Tracking-Id"] = tracking_id
 
+    def create_tracking_id(self):
+        """
+        Generate a UUID to be used as a OneFuse Tracking ID. This is useful
+        when Tracking ID may be needed prior to submitting a request.
+        """
+        tracking_id = uuid1().__str__()
+        self.logger.debug(f'Tracking id created: {tracking_id}')
+        return tracking_id
 
 if __name__ == '__main__':
     username = sys.argv[1]  # 'OneFuse Username'
