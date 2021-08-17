@@ -21,7 +21,13 @@ class BackupManager(object):
     considers the differences in Linux and Windows file paths and when calling
     each method, depending on the OS this is being called from the file path
     passed in to the methods will need to be slightly different. See examples
-    for specifics.
+    for specifics. Will create a file structure similar to the following
+
+    file_path
+    |--- microsoftADPolicies
+    |    |--- production.json
+    |--- endpoints
+    |    |--- cloudbolt_io.json
 
     Parameters
     ----------
@@ -248,11 +254,14 @@ class BackupManager(object):
             raise Exception(error_string)
 
     def restore_policies_from_file_path(self, file_path: str,
-                                        overwrite: bool = False):
+                                        overwrite: bool = False,
+                                        continue_on_error: bool = False):
         """
         Restore all policies from a File Path. This file path needs to be
-        local on the host where this script is being run from. The file
-        structure should look like the following:
+        local on the host where this script is being run from. Default behavior
+        of this method is to not overwrite policies that already exist and to
+        not continue if there is an error with restoring any single policy.
+        The file structure should look like the following:
 
         file_path
         |--- microsoftADPolicies
@@ -271,6 +280,9 @@ class BackupManager(object):
             Specify whether to overwrite existing policies with the data from
             the backup (True) even if the policy already exists, or to skip if
             the policy already exists (False). Defaults to False
+        continue_on_error : bool - optional
+            Continue to next policy if restore of a single policy fails?
+            Default - False
         """
         policy_types = [
             "moduleCredentials", "endpoints", "validators", "namingSequences",
@@ -287,7 +299,6 @@ class BackupManager(object):
                 policy_files = [f for f in listdir(policy_type_path)
                                 if isfile(join(policy_type_path, f))]
                 for file_name in policy_files:
-
                     f = open(f'{policy_type_path}{file_name}', 'r')
                     content = f.read()
                     f.close()
@@ -346,23 +357,42 @@ class BackupManager(object):
                             f'Creating OneFuse Content. policy_type: '
                             f'{policy_type}, file_name: {file_name}')
                         url = f'/{policy_type}/'
-                        restore_content = self.create_restore_content(
-                            policy_type, json_content)
+                        try:
+                            restore_content = self.create_restore_content(
+                                policy_type, json_content)
+                        except:
+                            error_string = (f'Restore content could not be '
+                                            f'created for {file_name}.')
+                            if continue_on_error:
+                                self.ofm.logger.error(f'{error_string} '
+                                                      f'Continuing with '
+                                                      f'restoring other '
+                                                      f'policies')
+                                continue
+                            else:
+                                raise Exception(f'{error_string}')
                         if policy_type == "moduleCredentials":
                             restore_content["password"] = "Pl@ceHolder123!"
                             self.ofm.logger.warning(
                                 f'Your credential has been restored but '
                                 f'before it can be used you must update the '
                                 f'password for the credential: {file_name}')
-                        response = self.ofm.post(url, json=restore_content)
                         try:
+                            response = self.ofm.post(url, json=restore_content)
                             response.raise_for_status()
                         except:
                             error_string = (
-                                f'Creation Failed. url: {url}, '
+                                f'Creation Failed for url: {url}, '
                                 f'restore_content: {restore_content}'
-                                f'Error: {response.content}')
-                            raise Exception(error_string)
+                                f'Error: {response.content}.')
+                            if continue_on_error:
+                                self.ofm.logger.error(f'{error_string} '
+                                                      f'Continuing with '
+                                                      f'restoring other '
+                                                      f'policies')
+                                continue
+                            else:
+                                raise Exception(f'{error_string}')
 
                     elif response_json["count"] == 1:
                         if overwrite:
@@ -375,19 +405,30 @@ class BackupManager(object):
                             url = f'/{policy_type}/{policy_id}/'
                             restore_content = self.create_restore_content(
                                 policy_type, json_content)
-                            response = self.ofm.put(url, json=restore_content)
-                            response.raise_for_status()
+                            try:
+                                response = self.ofm.put(url,
+                                                        json=restore_content)
+                                response.raise_for_status()
+                            except:
+                                error_string = (
+                                    f'Update Failed for url: {url}, '
+                                    f'restore_content: {restore_content}'
+                                    f'Error: {response.content}.')
+                                if continue_on_error:
+                                    self.ofm.logger.error(f'{error_string} '
+                                                          f'Continuing with '
+                                                          f'restoring other '
+                                                          f'policies')
+                                    continue
+                                else:
+                                    raise Exception(f'{error_string}')
                         else:
                             self.ofm.logger.info(f'Overwrite is set to: '
                                                  f'{overwrite}, Policy: '
                                                  f'{policy_name} already '
                                                  f'exists. Skipping')
-                    else:
-                        warn_str = (
-                            f'WARN: More than one policy was found with'
-                            f' the name: {policy_name} and type: '
-                            f'{policy_type}. Skipping policy restore')
-                        self.ofm.logger.warning(warn_str)
+                            continue
+
             else:
                 self.ofm.logger.info(
                     f'Directory for policy type: {policy_type} does not '

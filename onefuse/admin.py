@@ -109,8 +109,8 @@ class OneFuseManager(object):
             # logging.basicConfig(filename='onefuse.log', level=numeric_level)
             logging.basicConfig(level=numeric_level)
             logger = logging.getLogger(__name__)
-            console_handler = logging.StreamHandler(sys.stdout)
-            logger.addHandler(console_handler)
+            # console_handler = logging.StreamHandler(sys.stdout)
+            # logger.addHandler(console_handler)
         if not verify_certs:
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
