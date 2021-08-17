@@ -188,7 +188,7 @@ class OneFuseManager(object):
             Stack of properties used in OneFuse policy execution
         name : str
             The name of the Active Directory Computer object to be created
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -262,7 +262,8 @@ class OneFuseManager(object):
 
     # Ansible Tower Functions
     def provision_ansible_tower(self, policy_name: str, properties_stack: dict,
-                                hosts: str, limit: str, tracking_id: str = ""):
+                                hosts: str = '', limit: str = '',
+                                tracking_id: str = ""):
         """
         Provision an Ansible Tower Deployment
 
@@ -272,13 +273,13 @@ class OneFuseManager(object):
             OneFuse Ansible Tower Policy Name
         properties_stack : dict
             Stack of properties used in OneFuse policy execution
-        hosts : str
+        hosts : str - optional
             Comma separated string of Ansible Tower Hosts. This is taken as a
             string input because it is rendered, allowing for loops, and other
             jinja syntax to be leveraged
-        limit : str
+        limit : str - optional
             Ansible Tower Limit override
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -347,7 +348,7 @@ class OneFuseManager(object):
         zones : list
             List of Zones to add the reservation to. eg:
                 ["cloudbolt.io", "cloudboltsoftware.com"]
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -405,7 +406,7 @@ class OneFuseManager(object):
         hostname : str
             Hostname that the IPAM reservation is being made for. Will be set
             in the downstream IPAM provider
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -454,7 +455,7 @@ class OneFuseManager(object):
             OneFuse Naming Policy Name
         properties_stack : dict
             Stack of properties used in OneFuse policy execution
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -644,7 +645,7 @@ class OneFuseManager(object):
             OneFuse Scripting Policy Name
         properties_stack : dict
             Stack of properties used in OneFuse policy execution
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -692,7 +693,7 @@ class OneFuseManager(object):
             OneFuse ServiceNow CMDB Policy Name
         properties_stack : dict
             Stack of properties used in OneFuse policy execution
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -769,7 +770,7 @@ class OneFuseManager(object):
             Stack of properties used in OneFuse policy execution
         deployment_name : str
             Name to set in vRA for the deployment being provisioned
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
@@ -939,12 +940,13 @@ class OneFuseManager(object):
         path : str
             The REST path for the policy executed. ex: '/customNames/'
         template : dict
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
-        method : str
-            The type of method called for the original job. ex: "put"
+        method : str - optional
+            The type of method called for the original job. ex: 'put'. Default
+            is 'post'
         """
         self.add_tracking_id_to_headers(tracking_id)
         self.logger.debug(f'Submitting {method} request to path: {path} with '
@@ -1115,7 +1117,7 @@ class OneFuseManager(object):
 
         Parameters
         ----------
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID.
         """
         if tracking_id is not None and tracking_id != "":
