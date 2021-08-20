@@ -4,8 +4,17 @@ import sys
 from os import listdir
 from os.path import isfile, join
 import errno
+from .exceptions import (BackupsUnknownError, RestoreContentError,
+                         OneFuseError, BadRequest, PolicyTypeNotFound)
+from .admin import OneFuseManager
+from requests.exceptions import HTTPError
 
-from onefuse.admin import OneFuseManager
+
+# TODO : Add new error handling across the board
+# TODO : Finalize documentation
+# TODO : Add method for single policy backup
+# TODO : Add method for single policy restore
+# TODO : Add 1.4 support
 
 
 # If system run on is Windows, swap '/' with '\\' for file paths
@@ -66,6 +75,20 @@ class BackupManager(object):
 
     # Backups Content
     def create_json_files(self, response, policy_type, backups_path):
+        """
+        Creates the json files and stores them in backups_path for the OneFuse
+        policies being backed up.
+
+        Parameters
+        ----------
+        response : requests.models.Response
+            The response from a OneFuse call to get OneFuse policies
+        policy_type : str
+            The type of policy being backed up, used to create sub directories
+            when storing the files
+        backups_path : str
+            The file path where the json files should be stored
+        """
         try:
             response.raise_for_status()
         except:
@@ -97,8 +120,9 @@ class BackupManager(object):
                        f'{policy["name"]}'
             if policy_type == "endpoints":
                 if "credential" in policy["_links"]:
+                    # TODO: Research if this is still needed. Appears name returns from endpoints
                     policy["_links"]["credential"][
-                        "title"] = self.get_credential_name(policy, self.ofm)
+                        "title"] = self.get_credential_name(policy)
             if not os.path.exists(os.path.dirname(filename)):
                 try:
                     os.makedirs(os.path.dirname(filename))
@@ -120,10 +144,18 @@ class BackupManager(object):
 
         return self.key_exists(response_json["_links"], "next")
 
-    def get_credential_name(self, policy, onefuse):
+    def get_credential_name(self, policy):
+        """
+        Returns the name of a OneFuse Credential from an endpoint policy
+
+        Parameters
+        __________
+        policy : dict
+            The dict of an endpoint policy
+        """
         href = policy["_links"]["credential"]["href"]
         url = href.replace('/api/v3/onefuse', '')
-        response = onefuse.get(url)
+        response = self.ofm.get(url)
         try:
             response.raise_for_status()
         except:
@@ -134,6 +166,16 @@ class BackupManager(object):
         return response.json()["name"]
 
     def key_exists(self, in_dict, key):
+        """
+        Returns a boolean indicating whether a key exists in a dict
+
+        Parameters
+        ----------
+        in_dict : dict
+            Dict to check for existence of key
+        key : str
+            Key to check for
+        """
         if key in in_dict.keys():
             self.ofm.logger.debug(f'Key exists: {key}')
             return True
@@ -141,6 +183,17 @@ class BackupManager(object):
             return False
 
     def backup_policies(self, backups_path):
+        """
+        Back up all OneFuse policies from the OneFuse instance used when
+        instantiating the OneFuseBackups class
+
+        Parameters
+        ----------
+        backups_path : str
+            Path to back the files up to. Examples:
+                Windows: 'C:\\temp\\onefuse_backups\\'
+                Linux: '/tmp/onefuse_backups/'
+        """
         policy_types = [
             "moduleCredentials", "endpoints", "validators", "namingSequences",
             "namingPolicies", "propertySets", "ipamPolicies", "dnsPolicies",
@@ -298,138 +351,133 @@ class BackupManager(object):
             if os.path.exists(os.path.dirname(policy_type_path)):
                 policy_files = [f for f in listdir(policy_type_path)
                                 if isfile(join(policy_type_path, f))]
+                print(f'{policy_files}')
                 for file_name in policy_files:
-                    f = open(f'{policy_type_path}{file_name}', 'r')
-                    content = f.read()
-                    f.close()
-                    json_content = json.loads(content)
-                    policy_name = json_content["name"]
-
-                    if "type" in json_content:
-                        url = (
-                            f'/{policy_type}/?filter=name.iexact:"'
-                            f'{policy_name}";type.iexact:"'
-                            f'{json_content["type"]}"')
-                    elif "endpointType" in json_content:
-                        url = (
-                            f'/{policy_type}/?filter=name.iexact:"'
-                            f'{policy_name}";endpointType.iexact:"'
-                            f'{json_content["endpointType"]}"')
-                    else:
-                        url = f'/{policy_type}/?filter=name.iexact:"' \
-                              f'{policy_name}"'
-                    # Check does policy exist
-                    response = self.ofm.get(url)
-                    # self.ofm.logger.debug(f'url: {url}')
-                    # Check for errors. If "Not Found." continue to next
-                    # file_name
+                    json_path = f'{policy_type_path}{file_name}'
                     try:
-                        response.raise_for_status()
-                    except:
-                        try:
-                            detail = response.json()["detail"]
-                        except:
-                            error_string = (
-                                f'Unknown error. JSON: {response.json()}, ')
-                            error_string += (
-                                f'Error: {sys.exc_info()[0]}. '
-                                f'{sys.exc_info()[1]}, '
-                                f'line: {sys.exc_info()[2].tb_lineno}')
-                            raise Exception(error_string)
-                        if detail == 'Not found.':
-                            # This may happen when script is run against older
-                            # versions of Onefuse that do not support all modules
-                            self.ofm.logger.warning(
-                                f'policy_type not found: {policy_type}, '
-                                f'file_name: {file_name}')
-                            continue
-                        else:
-                            error_string = (
-                                f'Unknown error. JSON: {response.json()}, '
-                                f'Error: {sys.exc_info()[0]}. '
-                                f'{sys.exc_info()[1]}, '
-                                f'line: {sys.exc_info()[2].tb_lineno}')
-                            raise Exception(error_string)
-
-                    response_json = response.json()
-                    if response_json["count"] == 0:
-                        self.ofm.logger.info(
-                            f'Creating OneFuse Content. policy_type: '
-                            f'{policy_type}, file_name: {file_name}')
-                        url = f'/{policy_type}/'
-                        try:
-                            restore_content = self.create_restore_content(
-                                policy_type, json_content)
-                        except:
-                            error_string = (f'Restore content could not be '
-                                            f'created for {file_name}.')
-                            if continue_on_error:
-                                self.ofm.logger.error(f'{error_string} '
-                                                      f'Continuing with '
-                                                      f'restoring other '
-                                                      f'policies')
-                                continue
-                            else:
-                                raise Exception(f'{error_string}')
-                        if policy_type == "moduleCredentials":
-                            restore_content["password"] = "Pl@ceHolder123!"
-                            self.ofm.logger.warning(
-                                f'Your credential has been restored but '
-                                f'before it can be used you must update the '
-                                f'password for the credential: {file_name}')
-                        try:
-                            response = self.ofm.post(url, json=restore_content)
-                            response.raise_for_status()
-                        except:
-                            error_string = (
-                                f'Creation Failed for url: {url}, '
-                                f'restore_content: {restore_content}'
-                                f'Error: {response.content}.')
-                            if continue_on_error:
-                                self.ofm.logger.error(f'{error_string} '
-                                                      f'Continuing with '
-                                                      f'restoring other '
-                                                      f'policies')
-                                continue
-                            else:
-                                raise Exception(f'{error_string}')
-
-                    elif response_json["count"] == 1:
-                        if overwrite:
-                            self.ofm.logger.info(
-                                f'Updating OneFuse Content. policy_type: '
-                                f'{policy_type}, file_name: {file_name}')
-                            policy_json = \
-                                response_json["_embedded"][policy_type][0]
-                            policy_id = policy_json["id"]
-                            url = f'/{policy_type}/{policy_id}/'
-                            restore_content = self.create_restore_content(
-                                policy_type, json_content)
-                            try:
-                                response = self.ofm.put(url,
-                                                        json=restore_content)
-                                response.raise_for_status()
-                            except:
-                                error_string = (
-                                    f'Update Failed for url: {url}, '
-                                    f'restore_content: {restore_content}'
-                                    f'Error: {response.content}.')
-                                if continue_on_error:
-                                    self.ofm.logger.error(f'{error_string} '
-                                                          f'Continuing with '
-                                                          f'restoring other '
-                                                          f'policies')
-                                    continue
-                                else:
-                                    raise Exception(f'{error_string}')
-                        else:
-                            self.ofm.logger.info(f'Overwrite is set to: '
-                                                 f'{overwrite}, Policy: '
-                                                 f'{policy_name} already '
-                                                 f'exists. Skipping')
+                        self.restore_single_policy(json_path, overwrite)
+                    except PolicyTypeNotFound:
+                        continue
+                    except Exception as err:
+                        if continue_on_error:
                             continue
 
+
+    def restore_single_policy(self, json_path: str, overwrite: bool = False):
+        """
+        Restore a single OneFuse policy from a file. This method assumes that
+        any linked policies referenced have already been restored
+
+        Parameters
+        ----------
+        json_path : str
+            Path to the single file that you want to restore. Linux example:
+            '/tmp/onefuse-backups/namingPolicies/prod.json'
+            Windows example:
+            'C:\\temp\\onefuse_backups\\namingPolicies\prod.json'
+        overwrite : bool - optional
+            Specify whether to overwrite an existing policiy with the data from
+            the backup (True) even if the policy already exists, or to skip if
+            the policy already exists (False). Defaults to False
+        """
+        path_split = json_path.split(path_char)
+        policy_type = path_split[-2]
+        file_name = path_split[-1]
+        policy_type_path = json_path.replace(file_name, '')
+        f = open(json_path, 'r')
+        content = f.read()
+        f.close()
+        json_content = json.loads(content)
+        policy_name = json_content["name"]
+
+        if "type" in json_content:
+            url = (
+                f'/{policy_type}/?filter=name.iexact:"'
+                f'{policy_name}";type.iexact:"'
+                f'{json_content["type"]}"')
+        elif "endpointType" in json_content:
+            url = (
+                f'/{policy_type}/?filter=name.iexact:"'
+                f'{policy_name}";endpointType.iexact:"'
+                f'{json_content["endpointType"]}"')
+        else:
+            url = f'/{policy_type}/?filter=name.iexact:"' \
+                  f'{policy_name}"'
+        # Check does policy exist
+        response = self.ofm.get(url)
+        # Check for errors. If "Not Found." continue to next
+        try:
+            response.raise_for_status()
+        except:
+            try:
+                detail = response.json()["detail"]
+            except:
+                raise BackupsUnknownError('Response JSON detail '
+                                          'cannot be accessed',
+                                          response=response)
+            if detail == 'Not found.':
+                # This may happen when script is run against older
+                # versions of Onefuse that do not support all modules
+                warn_msg = (f'policy_type not found in OneFuse: {policy_type}, '
+                            f'file_name: {file_name}')
+                self.ofm.logger.warning(warn_msg)
+                raise PolicyTypeNotFound(warn_msg)
             else:
-                self.ofm.logger.info(
-                    f'Directory for policy type: {policy_type} does not '
-                    f'exist. Skipping.')
+                raise BackupsUnknownError(f'Request to URL: {url} '
+                                          f'failed',
+                                          response=response)
+        response_json = response.json()
+
+        if response_json["count"] == 0:
+            self.ofm.logger.info(
+                f'Creating OneFuse Content. policy_type: '
+                f'{policy_type}, file_name: {file_name}')
+            url = f'/{policy_type}/'
+            try:
+                restore_content = self.create_restore_content(
+                    policy_type, json_content)
+            except:
+                error_string = (f'Restore content could not be '
+                                f'created for {file_name}.')
+                raise RestoreContentError(f'{error_string}')
+            if policy_type == "moduleCredentials":
+                restore_content["password"] = "Pl@ceHolder123!"
+                self.ofm.logger.warning(
+                    f'Your credential has been restored but '
+                    f'before it can be used you must update the '
+                    f'password for the credential: {file_name}')
+            try:
+                response = self.ofm.post(url, json=restore_content)
+                response.raise_for_status()
+            except HTTPError as err:
+                self.ofm.http_error_handling(err)
+            except Exception as err:
+                err_msg = f'{err}. '
+                err_msg += (f'Creation Failed for url: {url}, restore_content:'
+                            f' {restore_content} Error: {response.content}.')
+                raise BackupsUnknownError(f'{err_msg}')
+
+        elif response_json["count"] == 1:
+            if overwrite:
+                self.ofm.logger.info(f'Updating OneFuse Content. policy_type: '
+                                     f'{policy_type}, file_name: {file_name}')
+                policy_json = response_json["_embedded"][policy_type][0]
+                policy_id = policy_json["id"]
+                url = f'/{policy_type}/{policy_id}/'
+                restore_content = self.create_restore_content(policy_type,
+                                                              json_content)
+                try:
+                    response = self.ofm.put(url, json=restore_content)
+                    response.raise_for_status()
+                except HTTPError as err:
+                    self.ofm.http_error_handling(err)
+                except Exception as err:
+                    err_msg = f'{err}. '
+                    err_msg += (f'Creation Failed for url: {url}, '
+                                f'restore_content: {restore_content}. '
+                                f'Error: {response.content}.')
+                    raise BackupsUnknownError(f'{err_msg}')
+            else:
+                self.ofm.logger.warn(f'Overwrite is set to: {overwrite}, '
+                                     f'Policy: {policy_name} already exists. '
+                                     f'Skipping')
