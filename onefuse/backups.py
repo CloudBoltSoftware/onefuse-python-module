@@ -411,6 +411,11 @@ class BackupManager(object):
                         continue
                     except Exception as err:
                         if continue_on_error:
+                            err_str = f'Error encountered when restoring ' \
+                                      f'policy_type: {policy_type}, ' \
+                                      f'file_name: {file_name}, but ' \
+                                      f'continue_on_error is True, continuing.'
+                            self.ofm.logger.info(err_str)
                             continue
                         raise err
 

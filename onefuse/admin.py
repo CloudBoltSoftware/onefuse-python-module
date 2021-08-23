@@ -1,6 +1,8 @@
 import re
 import sys
 import json
+from decimal import Decimal
+
 import requests
 import socket
 import logging
@@ -1137,6 +1139,29 @@ class OneFuseManager(object):
         self.logger.debug(f'Tracking id created: {tracking_id}')
         return tracking_id
 
+    def get_onefuse_version(self):
+        """
+        Get the version of the current instantiated OneFuse Appliance
+        """
+        response = self.get('/productInfo')
+        response.raise_for_status()
+        response_json = response.json()
+        version = response_json["version"]
+        return version
+
+    def get_onefuse_instance_id(self):
+        response = self.get('/productInfo')
+        response.raise_for_status()
+        response_json = response.json()
+        try:
+            instance_id = response_json["instanceId"]
+            return instance_id
+        except KeyError:
+            self.logger.info(f'Unable to return Instance ID, version is < '
+                             f'1.4')
+            return None
+
+
     # Error Handling
     def http_error_handling(self, err: HTTPError):
         """
@@ -1156,9 +1181,11 @@ class OneFuseManager(object):
         err_msg = f'{err}. Messages: '
         err_msg += ', '.join([err["message"] for err in errs])
         if err.response.reason == 'Bad Request':
+            self.logger.error(err_msg)
             raise BadRequest(err_msg)
         else:
             err_msg = f'{err.response.reason}: {err_msg}'
+            self.logger.error(err_msg)
             raise OneFuseError(err_msg)
 
 if __name__ == '__main__':
