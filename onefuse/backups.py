@@ -9,7 +9,6 @@ from .exceptions import (BackupsUnknownError, RestoreContentError,
 from .admin import OneFuseManager
 from requests.exceptions import HTTPError
 
-
 # TODO : Add new error handling across the board
 # TODO : Finalize documentation
 # TODO : Add method for single policy backup
@@ -47,7 +46,8 @@ class BackupManager(object):
     Create a connection to OneFuse and instantiate a BackupManager:
         from onefuse.admin import OneFuseManager
         from onefuse.backups import BackupManager
-        ofm = OneFuseManager('username','password','onefuse_fqdn')
+        ofm = OneFuseManager('username','password','onefuse_fqdn',
+                             log_level='INFO')
         backups = BackupManager(ofm)
 
     Backup all OneFuse policies to a file path on Linux
@@ -62,6 +62,10 @@ class BackupManager(object):
 
     Restore all OneFuse policies found in a file path to OneFuse - Windows
         backups.restore_policies_from_file_path('C:\\temp\\onefuse_backups\\')
+
+    Restore a single OneFuse policy from json file (Windows) -
+        backups.restore_single_policy(
+                'C:\\temp\\onefuse_backups\\propertySets\\static_prod.json')
     """
 
     def __init__(self, ofm: OneFuseManager, **kwargs):
@@ -74,55 +78,69 @@ class BackupManager(object):
         return 'OneFuseBackups'
 
     # Backups Content
-    def create_json_files(self, response, policy_type, backups_path):
+    def create_json_files(self, response, policy_type: str, backups_path: str):
         """
         Creates the json files and stores them in backups_path for the OneFuse
-        policies being backed up.
+        policies being backed up. For single policy backups returns None,
 
         Parameters
         ----------
-        response : requests.models.Response
-            The response from a OneFuse call to get OneFuse policies
+        response : requests.models.Response OR dict
+            The response from a OneFuse call to get OneFuse policies. If a
+            dict is passed in that would be a single OneFuse policy, if it is
+            the Response type that would be the actual Response from a list
+            query against a OneFuse type
         policy_type : str
             The type of policy being backed up, used to create sub directories
             when storing the files
         backups_path : str
             The file path where the json files should be stored
         """
-        try:
-            response.raise_for_status()
-        except:
+        if type(response) == dict:
+            # if a dict was passed in it was for the single policy backup,
+            # Need to structure as a list
+            policies = [response]
+        else:
             try:
-                detail = response.json()["detail"]
+                response.raise_for_status()
             except:
-                error_string = f'Unknown error. JSON: {response.json()}, '
-                error_string += (
-                    f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
-                    f'line: {sys.exc_info()[2].tb_lineno}')
-                raise Exception(error_string)
-            if detail == 'Not found.':
-                # This may happen when script is run against older versions.
-                self.ofm.logger.warning(f"policy_type not found: "
-                                        f"{policy_type}")
-                return False
-            else:
-                error_string = f'Unknown error. JSON: {response.json()}, '
-                error_string += (
-                    f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
-                    f'line: {sys.exc_info()[2].tb_lineno}')
-                raise Exception(error_string)
-        response_json = response.json()
+                try:
+                    detail = response.json()["detail"]
+                except:
+                    error_string = f'Unknown error. JSON: {response.json()}, '
+                    error_string += (
+                        f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
+                        f'line: {sys.exc_info()[2].tb_lineno}')
+                    raise OneFuseError(error_string, response=response)
+                if detail == 'Not found.':
+                    # This may happen when script is run against older versions.
+                    self.ofm.logger.warning(f"policy_type not found: "
+                                            f"{policy_type}")
+                    return False
+                else:
+                    error_string = f'Unknown error. JSON: {response.json()}, '
+                    error_string += (
+                        f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
+                        f'line: {sys.exc_info()[2].tb_lineno}')
+                    raise OneFuseError(error_string, response=response)
+            response_json = response.json()
+            policies = response_json["_embedded"][policy_type]
 
-        for policy in response_json["_embedded"][policy_type]:
+        for policy in policies:
             self.ofm.logger.debug(f'Backing up {policy_type} policy: '
                                   f'{policy["name"]}')
             filename = f'{backups_path}{policy_type}{path_char}' \
                        f'{policy["name"]}'
             if policy_type == "endpoints":
                 if "credential" in policy["_links"]:
-                    # TODO: Research if this is still needed. Appears name returns from endpoints
-                    policy["_links"]["credential"][
-                        "title"] = self.get_credential_name(policy)
+                    # OneFuse 1.2 had a bug where the title of a credential
+                    # Started with 'Module Credential id', if that is the
+                    # case we will grab the actual credential title from the
+                    # system
+                    if (policy["_links"]["credential"]["title"].find(
+                            "Module Credential id") == 0):
+                        policy["_links"]["credential"][
+                            "title"] = self.get_credential_name(policy)
             if not os.path.exists(os.path.dirname(filename)):
                 try:
                     os.makedirs(os.path.dirname(filename))
@@ -141,10 +159,13 @@ class BackupManager(object):
             f = open(file_name, 'w+')
             f.write(json.dumps(policy, indent=4))
             f.close()
+        if type(response) == dict:
+            # When running a single policy backup, None should be returned
+            return None
 
         return self.key_exists(response_json["_links"], "next")
 
-    def get_credential_name(self, policy):
+    def get_credential_name(self, policy: dict):
         """
         Returns the name of a OneFuse Credential from an endpoint policy
 
@@ -165,7 +186,7 @@ class BackupManager(object):
                               f'{response.json()["name"]}')
         return response.json()["name"]
 
-    def key_exists(self, in_dict, key):
+    def key_exists(self, in_dict: dict, key: str):
         """
         Returns a boolean indicating whether a key exists in a dict
 
@@ -182,7 +203,7 @@ class BackupManager(object):
         else:
             return False
 
-    def backup_policies(self, backups_path):
+    def backup_policies(self, backups_path: str):
         """
         Back up all OneFuse policies from the OneFuse instance used when
         instantiating the OneFuseBackups class
@@ -213,6 +234,31 @@ class BackupManager(object):
                 response = self.ofm.get(f'/{policy_type}/?{next_page}')
                 next_exists = self.create_json_files(response, policy_type,
                                                      backups_path)
+
+    def backup_single_policy(self, backups_path: str, policy_type: str,
+                             policy_name: str):
+        """
+        Back up a single OneFuse policy by name. Note: using this method will
+        not capture any linked policies, only the single policy requested
+        without any dependencies. The backed up policy will be placed in the
+        backups_path specified under a directory matching the policy_type
+
+        Parameters
+        ----------
+        backups_path : str
+            Path to back the files up to. Examples:
+                Windows: 'C:\\temp\\onefuse_backups\\'
+                Linux: '/tmp/onefuse_backups/'
+        policy_type : str
+            The type of policy to backup. Ex. 'namingPolicies'
+        policy_name : str
+            Name of the policy to backup. Ex: 'production'
+        """
+        self.ofm.logger.info(f'Backing up policy_type: {policy_type}, '
+                             f'policy_name: {policy_name}')
+
+        response = self.ofm.get_policy_by_name(policy_type, policy_name)
+        self.create_json_files(response, policy_type, backups_path)
 
     # Restore Content
     def create_restore_content(self, policy_type: str, json_content: dict):
@@ -257,9 +303,15 @@ class BackupManager(object):
                                 restore_json[key2].append(link_id)
                         else:
                             self.ofm.logger.warning(f'Unknown type found: '
-                                            f'{type(json_content["_links"][key2])}')
+                                                    f'{type(json_content["_links"][key2])}')
             elif key != 'id' and key != 'microsoftEndpoint':
-                restore_json[key] = json_content[key]
+                if policy_type == "namingSequences" and key == "lastValue":
+                    if json_content[key] is None:
+                        restore_json[key] = "1"
+                    else:
+                        restore_json[key] = json_content[key]
+                else:
+                    restore_json[key] = json_content[key]
         return restore_json
 
     def get_link_id(self, link_type: str, link_name: str, policy_type: str,
@@ -351,7 +403,6 @@ class BackupManager(object):
             if os.path.exists(os.path.dirname(policy_type_path)):
                 policy_files = [f for f in listdir(policy_type_path)
                                 if isfile(join(policy_type_path, f))]
-                print(f'{policy_files}')
                 for file_name in policy_files:
                     json_path = f'{policy_type_path}{file_name}'
                     try:
@@ -361,7 +412,7 @@ class BackupManager(object):
                     except Exception as err:
                         if continue_on_error:
                             continue
-
+                        raise err
 
     def restore_single_policy(self, json_path: str, overwrite: bool = False):
         """
@@ -418,8 +469,9 @@ class BackupManager(object):
             if detail == 'Not found.':
                 # This may happen when script is run against older
                 # versions of Onefuse that do not support all modules
-                warn_msg = (f'policy_type not found in OneFuse: {policy_type}, '
-                            f'file_name: {file_name}')
+                warn_msg = (
+                    f'policy_type not found in OneFuse: {policy_type}, '
+                    f'file_name: {file_name}')
                 self.ofm.logger.warning(warn_msg)
                 raise PolicyTypeNotFound(warn_msg)
             else:
