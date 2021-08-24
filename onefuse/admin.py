@@ -1,7 +1,6 @@
 import re
 import sys
 import json
-from decimal import Decimal
 
 import requests
 import socket

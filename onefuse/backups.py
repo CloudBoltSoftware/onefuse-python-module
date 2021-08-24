@@ -8,6 +8,7 @@ from .exceptions import (BackupsUnknownError, RestoreContentError,
                          OneFuseError, BadRequest, PolicyTypeNotFound)
 from .admin import OneFuseManager
 from requests.exceptions import HTTPError
+from decimal import Decimal
 
 # TODO : Add new error handling across the board
 # TODO : Finalize documentation
@@ -275,6 +276,7 @@ class BackupManager(object):
             Dict of JSON of a policy that you are looking to restore
         """
         restore_json = {}
+        version = self.ofm.get_onefuse_version()
         for key in json_content:
             if key == "_links":
                 for key2 in json_content["_links"]:
@@ -310,8 +312,20 @@ class BackupManager(object):
                         restore_json[key] = "1"
                     else:
                         restore_json[key] = json_content[key]
+                elif policy_type == "endpoints" and (
+                        key.find('Version') != -1
+                        or key.find('version') != -1):
+                    # If policy_type is endpoints, need to remove version info
+                    # when restoring from older versions to 1.4+
+                    if Decimal(version) < Decimal('1.4'):
+                        restore_json[key] = json_content[key]
+                elif policy_type == "propertySets" and key == "type":
+                    # OneFuse 1.4+ no longer has the type key on a Property set
+                    if Decimal(version) < Decimal('1.3'):
+                        restore_json[key] = json_content[key]
                 else:
                     restore_json[key] = json_content[key]
+        print(f"json_content: {json_content}")
         return restore_json
 
     def get_link_id(self, link_type: str, link_name: str, policy_type: str,
@@ -427,12 +441,14 @@ class BackupManager(object):
         Parameters
         ----------
         json_path : str
-            Path to the single file that you want to restore. Linux example:
+            Path to the single file that you want to restore. This file must
+            be included under a directory that matches the policy type.
+            Linux example:
             '/tmp/onefuse-backups/namingPolicies/prod.json'
             Windows example:
             'C:\\temp\\onefuse_backups\\namingPolicies\prod.json'
         overwrite : bool - optional
-            Specify whether to overwrite an existing policiy with the data from
+            Specify whether to overwrite an existing policy with the data from
             the backup (True) even if the policy already exists, or to skip if
             the policy already exists (False). Defaults to False
         """
@@ -446,19 +462,18 @@ class BackupManager(object):
         json_content = json.loads(content)
         policy_name = json_content["name"]
 
-        if "type" in json_content:
-            url = (
-                f'/{policy_type}/?filter=name.iexact:"'
-                f'{policy_name}";type.iexact:"'
-                f'{json_content["type"]}"')
+        if "type" in json_content and policy_type != "propertySets":
+            url = (f'/{policy_type}/?filter=name.iexact:"'
+                   f'{policy_name}";type.iexact:"'
+                   f'{json_content["type"]}"')
         elif "endpointType" in json_content:
-            url = (
-                f'/{policy_type}/?filter=name.iexact:"'
-                f'{policy_name}";endpointType.iexact:"'
-                f'{json_content["endpointType"]}"')
+            url = (f'/{policy_type}/?filter=name.iexact:"'
+                   f'{policy_name}";endpointType.iexact:"'
+                   f'{json_content["endpointType"]}"')
         else:
             url = f'/{policy_type}/?filter=name.iexact:"' \
                   f'{policy_name}"'
+
         # Check does policy exist
         response = self.ofm.get(url)
         # Check for errors. If "Not Found." continue to next
