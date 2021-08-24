@@ -321,11 +321,16 @@ class BackupManager(object):
                         restore_json[key] = json_content[key]
                 elif policy_type == "propertySets" and key == "type":
                     # OneFuse 1.4+ no longer has the type key on a Property set
-                    if Decimal(version) < Decimal('1.3'):
+                    if Decimal(version) < Decimal('1.4'):
                         restore_json[key] = json_content[key]
                 else:
                     restore_json[key] = json_content[key]
-        print(f"json_content: {json_content}")
+
+        if policy_type == 'ipamPolicies' and Decimal(version) >= Decimal('1.4'):
+            # If restoring from < 1.3 to 1.4, need to add skip IP defaults
+            if "updateConflictNameWithDns" not in restore_json:
+                restore_json["updateConflictNameWithDns"] = False
+        print(f"restore_json: {restore_json}")
         return restore_json
 
     def get_link_id(self, link_type: str, link_name: str, policy_type: str,
