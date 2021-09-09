@@ -5,15 +5,12 @@ from os import listdir
 from os.path import isfile, join
 import errno
 from .exceptions import (BackupsUnknownError, RestoreContentError,
-                         OneFuseError, BadRequest, PolicyTypeNotFound)
+                         OneFuseError, PolicyTypeNotFound)
 from .admin import OneFuseManager
 from requests.exceptions import HTTPError
 from decimal import Decimal
 
-# TODO : Add new error handling across the board
-# TODO : Finalize documentation
-# TODO : Add method for single policy backup
-# TODO : Add method for single policy restore
+
 # TODO : Add 1.4 support
 
 
@@ -71,6 +68,17 @@ class BackupManager(object):
 
     def __init__(self, ofm: OneFuseManager, **kwargs):
         self.ofm = ofm
+        self.policy_types = [
+            "moduleCredentials", "endpoints", "validators", "namingSequences",
+            "namingPolicies", "propertySets", "ipamPolicies", "dnsPolicies",
+            "microsoftADPolicies", "ansibleTowerPolicies", "scriptingPolicies",
+            "servicenowCMDBPolicies", "vraPolicies"
+        ]
+
+        if Decimal(self.ofm.onefuse_version) >= Decimal('1.4'):
+            self.policy_types.insert(0, 'modules')
+            self.policy_types.insert(1, 'connectionInfo')
+            self.policy_types.append('modulePolicies')
 
     def __enter__(self):
         return self
@@ -112,7 +120,7 @@ class BackupManager(object):
                     error_string += (
                         f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
                         f'line: {sys.exc_info()[2].tb_lineno}')
-                    raise OneFuseError(error_string, response=response)
+                    raise
                 if detail == 'Not found.':
                     # This may happen when script is run against older versions.
                     self.ofm.logger.warning(f"policy_type not found: "
@@ -130,8 +138,10 @@ class BackupManager(object):
         for policy in policies:
             self.ofm.logger.debug(f'Backing up {policy_type} policy: '
                                   f'{policy["name"]}')
-            filename = f'{backups_path}{policy_type}{path_char}' \
-                       f'{policy["name"]}'
+            file_path = f'{backups_path}{policy_type}{path_char}'
+            if policy_type == 'modules':
+                self.ofm.export_pluggable_module(policy["name"], file_path)
+                continue
             if policy_type == "endpoints":
                 if "credential" in policy["_links"]:
                     # OneFuse 1.2 had a bug where the title of a credential
@@ -142,9 +152,9 @@ class BackupManager(object):
                             "Module Credential id") == 0):
                         policy["_links"]["credential"][
                             "title"] = self.get_credential_name(policy)
-            if not os.path.exists(os.path.dirname(filename)):
+            if not os.path.exists(os.path.dirname(file_path)):
                 try:
-                    os.makedirs(os.path.dirname(filename))
+                    os.makedirs(os.path.dirname(file_path))
                 except OSError as exc:  # Guard against race condition
                     if exc.errno != errno.EEXIST:
                         raise
@@ -182,7 +192,7 @@ class BackupManager(object):
             response.raise_for_status()
         except:
             err_msg = f'Link could not be found for href: {href}'
-            raise Exception(err_msg)
+            raise OneFuseError(err_msg)
         self.ofm.logger.debug(f'Returning Credential name: '
                               f'{response.json()["name"]}')
         return response.json()["name"]
@@ -216,15 +226,8 @@ class BackupManager(object):
                 Windows: 'C:\\temp\\onefuse_backups\\'
                 Linux: '/tmp/onefuse_backups/'
         """
-        policy_types = [
-            "moduleCredentials", "endpoints", "validators", "namingSequences",
-            "namingPolicies", "propertySets", "ipamPolicies", "dnsPolicies",
-            "microsoftADPolicies", "ansibleTowerPolicies",
-            "scriptingPolicies", "servicenowCMDBPolicies", "vraPolicies"
-        ]
-
         # Gather policies from OneFuse, store them under BACKUPS_PATH
-        for policy_type in policy_types:
+        for policy_type in self.policy_types:
             self.ofm.logger.info(f'Backing up policy_type: {policy_type}')
             response = self.ofm.get(f'/{policy_type}/')
             next_exists = self.create_json_files(response, policy_type,
@@ -375,7 +378,7 @@ class BackupManager(object):
         else:
             error_string = (f'Link not found. link_type: {link_type}'
                             f'link_name: {link_name}')
-            raise Exception(error_string)
+            raise OneFuseError(error_string)
 
     def restore_policies_from_file_path(self, file_path: str,
                                         overwrite: bool = False,
@@ -408,15 +411,15 @@ class BackupManager(object):
             Continue to next policy if restore of a single policy fails?
             Default - False
         """
-        policy_types = [
-            "moduleCredentials", "endpoints", "validators", "namingSequences",
-            "namingPolicies", "propertySets", "ipamPolicies", "dnsPolicies",
-            "microsoftADPolicies", "ansibleTowerPolicies", "scriptingPolicies",
-            "servicenowCMDBPolicies", "vraPolicies"
-        ]
-
         # Gather policies from FILE_PATH, restore them to OneFuse
-        for policy_type in policy_types:
+        for policy_type in self.policy_types:
+            if policy_type == 'modules':
+                self.ofm.logger.warning(f'Skipping Modules restoration. '
+                                        f'Modules must be manually restored. '
+                                        f'If you are restoring module policies'
+                                        f'you will need to first upload each '
+                                        f'module manually')
+                continue
             self.ofm.logger.info(f'Restoring policy_type: {policy_type}')
             policy_type_path = f'{file_path}{policy_type}{path_char}'
             if os.path.exists(os.path.dirname(policy_type_path)):
@@ -436,7 +439,7 @@ class BackupManager(object):
                                       f'continue_on_error is True, continuing.'
                             self.ofm.logger.info(err_str)
                             continue
-                        raise err
+                        raise
 
     def restore_single_policy(self, json_path: str, overwrite: bool = False):
         """
@@ -451,7 +454,7 @@ class BackupManager(object):
             Linux example:
             '/tmp/onefuse-backups/namingPolicies/prod.json'
             Windows example:
-            'C:\\temp\\onefuse_backups\\namingPolicies\prod.json'
+            'C:\\temp\\onefuse_backups\\namingPolicies\\prod.json'
         overwrite : bool - optional
             Specify whether to overwrite an existing policy with the data from
             the backup (True) even if the policy already exists, or to skip if
@@ -460,7 +463,6 @@ class BackupManager(object):
         path_split = json_path.split(path_char)
         policy_type = path_split[-2]
         file_name = path_split[-1]
-        policy_type_path = json_path.replace(file_name, '')
         f = open(json_path, 'r')
         content = f.read()
         f.close()
@@ -488,9 +490,9 @@ class BackupManager(object):
             try:
                 detail = response.json()["detail"]
             except:
-                raise BackupsUnknownError('Response JSON detail '
-                                          'cannot be accessed',
-                                          response=response)
+                self.ofm.logger.error('Response JSON detail cannot be '
+                                      'accessed', response=response)
+                raise
             if detail == 'Not found.':
                 # This may happen when script is run against older
                 # versions of Onefuse that do not support all modules
@@ -514,9 +516,9 @@ class BackupManager(object):
                 restore_content = self.create_restore_content(
                     policy_type, json_content)
             except:
-                error_string = (f'Restore content could not be '
-                                f'created for {file_name}.')
-                raise RestoreContentError(f'{error_string}')
+                self.ofm.logger.error(f'Restore content could not be '
+                                      f'created for {file_name}.')
+                raise
             if policy_type == "moduleCredentials":
                 restore_content["password"] = "Pl@ceHolder123!"
                 self.ofm.logger.warning(
@@ -526,13 +528,14 @@ class BackupManager(object):
             try:
                 response = self.ofm.post(url, json=restore_content)
                 response.raise_for_status()
-            except HTTPError as err:
-                self.ofm.http_error_handling(err)
+            except HTTPError:
+                raise
             except Exception as err:
                 err_msg = f'{err}. '
                 err_msg += (f'Creation Failed for url: {url}, restore_content:'
                             f' {restore_content} Error: {response.content}.')
-                raise BackupsUnknownError(f'{err_msg}')
+                self.ofm.logger.error(err_msg)
+                raise
 
         elif response_json["count"] == 1:
             if overwrite:
@@ -546,14 +549,15 @@ class BackupManager(object):
                 try:
                     response = self.ofm.put(url, json=restore_content)
                     response.raise_for_status()
-                except HTTPError as err:
-                    self.ofm.http_error_handling(err)
+                except HTTPError:
+                    raise
                 except Exception as err:
                     err_msg = f'{err}. '
                     err_msg += (f'Creation Failed for url: {url}, '
                                 f'restore_content: {restore_content}. '
                                 f'Error: {response.content}.')
-                    raise BackupsUnknownError(f'{err_msg}')
+                    self.ofm.logger.error(err_msg)
+                    raise
             else:
                 self.ofm.logger.warn(f'Overwrite is set to: {overwrite}, '
                                      f'Policy: {policy_name} already exists. '

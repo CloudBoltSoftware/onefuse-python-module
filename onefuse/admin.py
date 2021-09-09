@@ -1,7 +1,8 @@
+import errno
 import re
 import sys
 import json
-
+import os
 import requests
 import socket
 import logging
@@ -10,7 +11,7 @@ from os import path
 from uuid import uuid1
 from requests.exceptions import HTTPError
 from .exceptions import (BackupsUnknownError, RestoreContentError,
-                         OneFuseError, BadRequest)
+                         OneFuseError, BadRequest, RequiredParameterMissing)
 
 ROOT_PATH = path.dirname(path.dirname(path.dirname(path.abspath(__file__))))
 sys.path.append(ROOT_PATH)
@@ -18,7 +19,6 @@ PROPERTY_SET_PREFIX = 'OneFuse_SPS_'
 
 
 # TODO: Add 1.4 Support
-# TODO: Add updated error handling
 
 # noinspection DuplicatedCode,PyBroadException,PyShadowingNames
 class OneFuseManager(object):
@@ -121,7 +121,6 @@ class OneFuseManager(object):
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             verify_certs = False
-        self.conn_info = host
         self.username = username
         self.password = password
         self.verify_certs = verify_certs
@@ -137,6 +136,7 @@ class OneFuseManager(object):
             'Connection': 'Keep-Alive',
             'SOURCE': source
         }
+        self.onefuse_version = self.get_onefuse_version()
 
     def __enter__(self):
         return self
@@ -249,7 +249,7 @@ class OneFuseManager(object):
         if state != 'build':
             msg = (f'Active Directory object is in {state} state this method '
                    f'only moves objects from "build" to "final"')
-            raise Exception(msg)
+            raise OneFuseError(msg)
 
         final_ou = get_response["finalOu"]
         name = get_response["name"]
@@ -449,6 +449,127 @@ class OneFuseManager(object):
         self.deprovision_mo(path)
         return path
 
+    # Pluggable Modules
+    def export_pluggable_module(self, module_name: str, save_path: str):
+        """
+        Export a Pluggable Module to a file path. The exported module will be
+        saved to a file
+
+        Parameters
+        ----------
+        module_name : str
+            The name of the module to export
+        save_path : str
+            File path to save the exported module zip file to
+            Windows: 'C:\\temp\\onefuse_backups\\'
+            Linux: '/tmp/onefuse_backups/'
+        """
+        path = 'modules'
+        module = self.get_policy_by_name(path, module_name)
+        module_id = module["id"]
+        export_path = f'/{path}/{module_id}/export/'
+        response = self.post(export_path, stream=True)
+        response.raise_for_status()
+        if not os.path.exists(os.path.dirname(save_path)):
+            try:
+                os.makedirs(os.path.dirname(save_path))
+            except OSError as exc:  # Guard against race condition
+                if exc.errno != errno.EEXIST:
+                    raise
+        file_path = f'{save_path}{module_name}.zip'
+        if os.path.isfile(file_path):
+            raise OneFuseError(f'Zip file already exists for module_name: '
+                               f'{module_name} in save_path: {save_path}')
+        with open(file_path, 'wb') as fd:
+            for chunk in response.iter_content(chunk_size=128):
+                fd.write(chunk)
+        self.logger.info(f'Module: {module_name} has been saved to: '
+                         f'{file_path}')
+        return None
+
+    def upload_pluggable_module(self, file_path: str,
+                                replace_existing: bool = False):
+        """
+        Upload a Pluggable Module zip file from a file path.
+
+        Parameters
+        ----------
+        file_path : str
+            File path to the module zip file
+            Windows: 'C:\\temp\\onefuse_backups\\modules\\f5.zip'
+            Linux: '/tmp/onefuse_backups/modules/f5.zip'
+        replace_existing : bool
+            Boolean to replace the module if it already exists. Default - False
+        """
+        # TODO: Fix once upload bug is resolved
+        path = '/modules/'
+        if os.name == 'nt':
+            path_char = '\\'
+        else:
+            path_char = '/'
+        zip_name = file_path.split(path_char)[-1]
+        file_object = open(file_path, 'rb')
+        files = {'zipFile': open(file_path, 'rb')}
+        values = {'replaceExisting': replace_existing, 'zipFile': file_object}
+        try:
+            response = self.post(path, data=values)
+            response.raise_for_status()
+        except HTTPError as err:
+            err_msg = (f'Request failed for path: {path}, Error: '
+                       f'{sys.exc_info()[0]}. {sys.exc_info()[1]}'
+                       f', line: {sys.exc_info()[2].tb_lineno}. Messages: ')
+            errors = json.loads(err.response.content)["errors"]
+            err_msg += ','.join(error["message"] for error in errors)
+            raise OneFuseError(err_msg)
+        return response
+
+    def provision_module(self, policy_name: str, template_properties: dict,
+                         tracking_id: str = ""):
+        """
+        Provision a managed object by executing a OneFuse Pluggable Module
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Pluggable Module Policy Name
+        template_properties : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get CMDB Policy by Name
+        rendered_policy_name = self.render(policy_name, template_properties)
+        policy_path = 'modulePolicies'
+        policy_json = self.get_policy_by_name(policy_path,
+                                              rendered_policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Request Scripting
+        template = {
+            "policy": policy_url,
+            "templateProperties": template_properties,
+            "workspace": workspace_url,
+        }
+        path = '/moduleManagedObjects/'
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def deprovision_module(self, mo_id: int):
+        """
+        De-Provision a Pluggable Module Managed Object
+
+        Parameters
+        ----------
+        mo_id : str
+            OneFuse ID of the IPAM Reservation to be de-provisioned
+        """
+        path = f'/moduleManagedObjects/{mo_id}/'
+        self.deprovision_mo(path)
+        return path
+
     # Naming Functions
     def provision_naming(self, policy_name: str, template_properties: dict,
                          tracking_id: str = ""):
@@ -567,7 +688,7 @@ class OneFuseManager(object):
                         except:
                             sps_properties[prop_key] = props[prop_key]
         except Exception:
-            raise Exception(
+            raise OneFuseError(
                 f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
                 f'line: {sys.exc_info()[2].tb_lineno}')
 
@@ -588,12 +709,12 @@ class OneFuseManager(object):
         sps_json = response.json()
 
         if sps_json["count"] > 1:
-            raise Exception(f"More than one Property Set was returned "
-                            f"matching the name: {sps_name}. Response: "
-                            f"{json.dumps(sps_json)}")
+            raise (f"More than one Property Set was returned "
+                   f"matching the name: {sps_name}. Response: "
+                   f"{json.dumps(sps_json)}")
 
         if sps_json["count"] == 0:
-            raise Exception(
+            raise OneFuseError(
                 f"No property sets were returned matching the"
                 f" name: {sps_name}. Response: "
                 f"{json.dumps(sps_json)}")
@@ -625,7 +746,7 @@ class OneFuseManager(object):
             Stack of properties used in OneFuse policy execution
         """
         create_properties = {}
-        pattern = re.compile("OneFuse_CreateProperties_")
+        pattern = re.compile('OneFuse_CreateProperties_')
         for key in template_properties.keys():
             result = pattern.match(key)
             if result is not None:
@@ -851,7 +972,7 @@ class OneFuseManager(object):
                 f'line: {sys.exc_info()[2].tb_lineno}. Template: '
                 f'{template}')
             self.logger.error(error_string)
-            raise Exception(f'OneFuse Template Render failed. {error_string}')
+            raise
 
     def get_job_json(self, job_id: int):
         """
@@ -868,7 +989,8 @@ class OneFuseManager(object):
         return job_json
 
     def wait_for_job_completion(self, job_response: requests.models.Response,
-                                path: str, method: str, sleep_seconds: int = 5):
+                                path: str, method: str,
+                                sleep_seconds: int = 5):
         """
         Continuously poll a OneFuse job until completion. Raise a TimeoutError
         when the max timeout per module is exceeded. Returns the json for the
@@ -915,11 +1037,16 @@ class OneFuseManager(object):
                 mo_json = json.loads(mo_string)
                 mo_json["trackingId"] = job_json["jobTrackingId"]
             else:
-                error_msg = job_json["responseInfo"]["payload"]
-                error_string = f'OneFuse job failure. {job_state}: {error_msg}'
+                payload = json.loads(job_json["responseInfo"]["payload"])
+                error_string = f'OneFuse job failure. State: {job_state}, ' \
+                               f'Error Code: {payload["code"]}, Errors: '
+                errors = payload["errors"]
+                error_string += ', '.join(err["message"] for err in errors)
                 self.logger.error(
                     f'OneFuse job failure. Error: {error_string}')
-                raise Exception(error_string)
+                if error_string.find("Required Variable is missing") > -1:
+                    raise RequiredParameterMissing(error_string)
+                raise OneFuseError(error_string)
         # Non-Async (ex: SPS) Returns a 201
         else:
             if method == 'delete':
@@ -963,7 +1090,7 @@ class OneFuseManager(object):
             elif method == 'put':
                 response = self.put(path, json=template)
             else:
-                raise Exception(
+                raise OneFuseError(
                     f'This action only supports post and put calls. '
                     f'Requested method: {method}')
             response.raise_for_status()
@@ -973,12 +1100,15 @@ class OneFuseManager(object):
                 sleep_seconds = 5
             mo_json = self.wait_for_job_completion(response, path, method,
                                                    sleep_seconds)
+        except HTTPError as err:
+            err_msg = (f'Request failed for path: {path}, Error: '
+                       f'{sys.exc_info()[0]}. {sys.exc_info()[1]}'
+                       f', line: {sys.exc_info()[2].tb_lineno}. Messages: ')
+            errors = json.loads(err.response.content)["errors"]
+            err_msg += ','.join(error["message"] for error in errors)
+            raise OneFuseError(err_msg)
         except:
-            error_string = (
-                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
-                f'line: {sys.exc_info()[2].tb_lineno}')
-            self.logger.error(error_string)
-            raise Exception(f'OneFuse Async call failed. {error_string}')
+            raise
         self.logger.debug(f'mo_json: {mo_json}')
         return mo_json
 
@@ -1005,14 +1135,14 @@ class OneFuseManager(object):
         policies_json = policies_response.json()
 
         if policies_json["count"] > 1:
-            raise Exception(f"More than one policy was returned matching "
-                            f"the name: {field_value}. Response: "
-                            f"{json.dumps(policies_json)}")
+            raise OneFuseError(f"More than one policy was returned matching "
+                               f"the name: {field_value}. Response: "
+                               f"{json.dumps(policies_json)}")
 
         if policies_json["count"] == 0:
-            raise Exception(f"No policies were returned matching the "
-                            f"name: {field_value}. Response: "
-                            f"{json.dumps(policies_json)}")
+            raise OneFuseError(f"No policies were returned matching the "
+                               f"name: {field_value}. Response: "
+                               f"{json.dumps(policies_json)}")
         policy_json = policies_json["_embedded"][resource_path][0]
         return policy_json
 
@@ -1052,9 +1182,10 @@ class OneFuseManager(object):
             self.logger.info(f"Object deleted from the OneFuse database. "
                              f"Path: {path}")
         except:
-            self.logger.error(
-                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}'
-                f', line: {sys.exc_info()[2].tb_lineno}')
+            self.logger.error(f'Deprovision failed for path: {path} '
+                              f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}'
+                              f', line: {sys.exc_info()[2].tb_lineno}')
+            raise
 
     def get_tracking_id_from_mo(self, path: str):
         """
@@ -1078,10 +1209,8 @@ class OneFuseManager(object):
             job_json = job_response.json()
             tracking_id = job_json["jobTrackingId"]
         except:
-            self.logger.error(
-                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}'
-                f', line: {sys.exc_info()[2].tb_lineno}')
-            self.logger.error('Tracking ID could not be determined for MO.')
+            self.logger.info('Tracking ID could not be determined for MO. '
+                             'OneFuse will create a Tracking ID')
             tracking_id = ""
         return tracking_id
 
@@ -1160,32 +1289,6 @@ class OneFuseManager(object):
                              f'1.4')
             return None
 
-
-    # Error Handling
-    def http_error_handling(self, err: HTTPError):
-        """
-        Enhanced error handling for failed OneFuse requests. Adds in System
-        messages to the Exception
-
-        Parameters
-        ----------
-        err : HTTPError
-            The HTTP error raised
-        continue_on_error : bool - Optional
-            Default - False. If this is set to True this method will not raise
-            an exception, but it will log an error. Allows scripts to proceed
-            if set to True
-        """
-        errs = err.response.json()["errors"]
-        err_msg = f'{err}. Messages: '
-        err_msg += ', '.join([err["message"] for err in errs])
-        if err.response.reason == 'Bad Request':
-            self.logger.error(err_msg)
-            raise BadRequest(err_msg)
-        else:
-            err_msg = f'{err.response.reason}: {err_msg}'
-            self.logger.error(err_msg)
-            raise OneFuseError(err_msg)
 
 if __name__ == '__main__':
     username = sys.argv[1]  # 'OneFuse Username'

@@ -26,8 +26,8 @@ class RequiredParameterMissing(OneFuseError):
 
 
 class BadRequest(OneFuseError):
-    "Exception raised when a policy restore fails due to a bad payload"
+    """Exception raised when a policy restore fails due to a bad payload"""
 
 
 class PolicyTypeNotFound(OneFuseError):
-    "Exception raised when a policy restore fails due to a bad payload"
+    """Exception raised when a policy restore fails due to a bad payload"""
