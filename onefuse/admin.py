@@ -74,11 +74,7 @@ class OneFuseManager(object):
 
     """
 
-    def __init__(self,
-                 username: str,
-                 password: str,
-                 host: str,
-                 **kwargs):
+    def __init__(self, username: str, password: str, host: str, **kwargs):
         """
         Instantiate the OneFuseManager
 
