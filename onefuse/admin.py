@@ -495,20 +495,29 @@ class OneFuseManager(object):
             Windows: 'C:\\temp\\onefuse_backups\\modules\\f5.zip'
             Linux: '/tmp/onefuse_backups/modules/f5.zip'
         replace_existing : bool
-            Boolean to replace the module if it already exists. Default - False
+            Boolean to replace the module if it already exists. If False is
+            selected, this will create a new module with a similar name.
+            Default - False
+
         """
-        # TODO: Fix once upload bug is resolved
         path = '/modules/'
         if os.name == 'nt':
             path_char = '\\'
         else:
             path_char = '/'
-        zip_name = file_path.split(path_char)[-1]
         file_object = open(file_path, 'rb')
-        files = {'zipFile': open(file_path, 'rb')}
-        values = {'replaceExisting': replace_existing, 'zipFile': file_object}
+        files = {'zipFile': ('upload.zip', file_object)}
+        data = {'replaceExisting': json.dumps(replace_existing)}
         try:
-            response = self.post(path, data=values)
+            # Can't use the ofm.post method here, file uploads require
+            # different headers than are provided by the class
+            response = requests.post(
+                self.base_url + path,
+                auth=HTTPBasicAuth(self.username, self.password),
+                verify=self.verify_certs,
+                data=data,
+                files=files
+            )
             response.raise_for_status()
         except HTTPError as err:
             err_msg = (f'Request failed for path: {path}, Error: '

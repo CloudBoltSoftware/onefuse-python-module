@@ -10,7 +10,6 @@ from .admin import OneFuseManager
 from requests.exceptions import HTTPError
 from decimal import Decimal
 
-
 # TODO : Add 1.4 support
 
 
@@ -329,7 +328,8 @@ class BackupManager(object):
                 else:
                     restore_json[key] = json_content[key]
 
-        if policy_type == 'ipamPolicies' and Decimal(version) >= Decimal('1.4'):
+        if policy_type == 'ipamPolicies' and Decimal(version) >= Decimal(
+                '1.4'):
             # If restoring from < 1.3 to 1.4, need to add skip IP defaults
             if "updateConflictNameWithDns" not in restore_json:
                 restore_json["updateConflictNameWithDns"] = False
@@ -414,32 +414,36 @@ class BackupManager(object):
         # Gather policies from FILE_PATH, restore them to OneFuse
         for policy_type in self.policy_types:
             if policy_type == 'modules':
-                self.ofm.logger.warning(f'Skipping Modules restoration. '
-                                        f'Modules must be manually restored. '
-                                        f'If you are restoring module policies'
-                                        f'you will need to first upload each '
-                                        f'module manually')
+                self.ofm.logger.info("Modules cannot be restored using this"
+                                     "method. While the OneFuse Backups module"
+                                     " does back up OneFuse pluggable modules,"
+                                     " these will need to be restored manually"
+                                     " using the "
+                                     "OneFuseManager.upload_pluggable_module"
+                                     "method")
                 continue
-            self.ofm.logger.info(f'Restoring policy_type: {policy_type}')
-            policy_type_path = f'{file_path}{policy_type}{path_char}'
-            if os.path.exists(os.path.dirname(policy_type_path)):
-                policy_files = [f for f in listdir(policy_type_path)
-                                if isfile(join(policy_type_path, f))]
-                for file_name in policy_files:
-                    json_path = f'{policy_type_path}{file_name}'
-                    try:
-                        self.restore_single_policy(json_path, overwrite)
-                    except PolicyTypeNotFound:
-                        continue
-                    except Exception as err:
-                        if continue_on_error:
-                            err_str = f'Error encountered when restoring ' \
-                                      f'policy_type: {policy_type}, ' \
-                                      f'file_name: {file_name}, but ' \
-                                      f'continue_on_error is True, continuing.'
-                            self.ofm.logger.info(err_str)
+            else:
+                self.ofm.logger.info(f'Restoring policy_type: {policy_type}')
+                policy_type_path = f'{file_path}{policy_type}{path_char}'
+                if os.path.exists(os.path.dirname(policy_type_path)):
+                    policy_files = [f for f in listdir(policy_type_path)
+                                    if isfile(join(policy_type_path, f))]
+                    for file_name in policy_files:
+                        json_path = f'{policy_type_path}{file_name}'
+                        try:
+                            self.restore_single_policy(json_path, overwrite)
+                        except PolicyTypeNotFound:
                             continue
-                        raise
+                        except Exception as err:
+                            if continue_on_error:
+                                err_str = f'Error encountered when restoring' \
+                                          f' policy_type: {policy_type}, ' \
+                                          f'file_name: {file_name}, but ' \
+                                          f'continue_on_error is True, ' \
+                                          f'continuing.'
+                                self.ofm.logger.info(err_str)
+                                continue
+                            raise
 
     def restore_single_policy(self, json_path: str, overwrite: bool = False):
         """
