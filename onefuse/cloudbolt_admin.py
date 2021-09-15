@@ -163,7 +163,7 @@ class CbOneFuseManager(OneFuseManager):
 
 
 class Utilities(object):
-    def __init__(self, logger):
+    def __init__(self, logger=None):
         if logger:
             self.logger = logger
         else:
@@ -298,6 +298,12 @@ class Utilities(object):
             self.logger.warning('Unable to determine Hardware Info for Server.')
         if hook_point is not None:
             properties_stack["hook_point"] = hook_point
+
+        for key in properties_stack.keys():
+            if key.find("OneFuse_SPS_") == 0:
+                # Replace properties with OneFuse_SPS_ with 1FPS_
+                key_val = key.replace('OneFuse_SPS_', '1FPS_')
+                properties_stack[key_val] = properties_stack.pop(key)
         return properties_stack
 
     def get_network_info(self, resource):
