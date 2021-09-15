@@ -9,7 +9,7 @@ You will want to install the latest version that matches the version of your
 OneFuse appliance. To find available versions the following command will
 cause pip to throw an error showing available versions: ::
 
-    $pip install onefuse=versions
+    $pip install onefuse==versions
 
 To install the OneFuse Python Module by version: ::
 

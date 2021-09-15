@@ -1,18 +1,24 @@
+import errno
 import re
 import sys
 import json
+import os
 import requests
 import socket
 import logging
 from requests.auth import HTTPBasicAuth
 from os import path
 from uuid import uuid1
+from requests.exceptions import HTTPError
+from .exceptions import (BackupsUnknownError, RestoreContentError,
+                         OneFuseError, BadRequest, RequiredParameterMissing)
 
 ROOT_PATH = path.dirname(path.dirname(path.dirname(path.abspath(__file__))))
 sys.path.append(ROOT_PATH)
-UPSTREAM_VERSION = '1.3.0'
-STATIC_PROPERTY_SET_PREFIX = 'OneFuse_SPS_'
+PROPERTY_SET_PREFIX = 'OneFuse_SPS_'
 
+
+# TODO: Add 1.4 Support
 
 # noinspection DuplicatedCode,PyBroadException,PyShadowingNames
 class OneFuseManager(object):
@@ -57,8 +63,8 @@ class OneFuseManager(object):
     Example 2 - Provision Naming with OOB methods:
         from onefuse.admin import OneFuseManager
         ofm = OneFuseManager(username, password, host)
-        naming_json = ofm.provision_naming(self, policy_name, properties_stack,
-                                           tracking_id)
+        naming_json = ofm.provision_naming(self, policy_name,
+                                           template_properties, tracking_id)
 
     Accepted optional kwargs:
 
@@ -68,11 +74,7 @@ class OneFuseManager(object):
 
     """
 
-    def __init__(self,
-                 username: str,
-                 password: str,
-                 host: str,
-                 **kwargs):
+    def __init__(self, username: str, password: str, host: str, **kwargs):
         """
         Instantiate the OneFuseManager
 
@@ -109,13 +111,12 @@ class OneFuseManager(object):
             # logging.basicConfig(filename='onefuse.log', level=numeric_level)
             logging.basicConfig(level=numeric_level)
             logger = logging.getLogger(__name__)
-            console_handler = logging.StreamHandler(sys.stdout)
-            logger.addHandler(console_handler)
+            # console_handler = logging.StreamHandler(sys.stdout)
+            # logger.addHandler(console_handler)
         if not verify_certs:
             import urllib3
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             verify_certs = False
-        self.conn_info = host
         self.username = username
         self.password = password
         self.verify_certs = verify_certs
@@ -131,6 +132,7 @@ class OneFuseManager(object):
             'Connection': 'Keep-Alive',
             'SOURCE': source
         }
+        self.onefuse_version = self.get_onefuse_version()
 
     def __enter__(self):
         return self
@@ -175,8 +177,8 @@ class OneFuseManager(object):
         return 'OneFuseManager'
 
     # AD Functions:
-    def provision_ad(self, policy_name: str, properties_stack: dict, name: str,
-                     tracking_id: str = ""):
+    def provision_ad(self, policy_name: str, template_properties: dict,
+                     name: str, tracking_id: str = ""):
         """
         Provision an Active Directory Object
 
@@ -184,17 +186,17 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse Active Directory Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         name : str
             The name of the Active Directory Computer object to be created
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get AD Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'microsoftADPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -204,7 +206,7 @@ class OneFuseManager(object):
         # Request AD
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
             "name": name,
         }
@@ -243,7 +245,7 @@ class OneFuseManager(object):
         if state != 'build':
             msg = (f'Active Directory object is in {state} state this method '
                    f'only moves objects from "build" to "final"')
-            raise Exception(msg)
+            raise OneFuseError(msg)
 
         final_ou = get_response["finalOu"]
         name = get_response["name"]
@@ -261,8 +263,9 @@ class OneFuseManager(object):
         return response_json
 
     # Ansible Tower Functions
-    def provision_ansible_tower(self, policy_name: str, properties_stack: dict,
-                                hosts: str, limit: str, tracking_id: str = ""):
+    def provision_ansible_tower(self, policy_name: str,
+                                template_properties: dict, hosts: str = '',
+                                limit: str = '', tracking_id: str = ""):
         """
         Provision an Ansible Tower Deployment
 
@@ -270,21 +273,21 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse Ansible Tower Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
-        hosts : str
+        hosts : str - optional
             Comma separated string of Ansible Tower Hosts. This is taken as a
             string input because it is rendered, allowing for loops, and other
             jinja syntax to be leveraged
-        limit : str
+        limit : str - optional
             Ansible Tower Limit override
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get Ansible Tower Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'ansibleTowerPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -294,18 +297,18 @@ class OneFuseManager(object):
         # Render hosts and limit
         hosts_arr = []
         if hosts:
-            rendered_hosts = self.render(hosts, properties_stack)
+            rendered_hosts = self.render(hosts, template_properties)
             for host in rendered_hosts.split(','):
                 hosts_arr.append(host.strip())
         if limit:
-            rendered_limit = self.render(limit, properties_stack)
+            rendered_limit = self.render(limit, template_properties)
         else:
             rendered_limit = ''
         # Request Ansible Tower
         template = {
             "policy": policy_url,
             "workspace": workspace_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "hosts": hosts_arr,
             "limit": rendered_limit
         }
@@ -328,7 +331,7 @@ class OneFuseManager(object):
         return path
 
     # DNS Functions
-    def provision_dns(self, policy_name: str, properties_stack: dict,
+    def provision_dns(self, policy_name: str, template_properties: dict,
                       name: str, value: str, zones: list,
                       tracking_id: str = ""):
         """
@@ -338,7 +341,7 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse DNS Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         name : str
             Name for the DNS reservation, typically a hostname
@@ -347,13 +350,13 @@ class OneFuseManager(object):
         zones : list
             List of Zones to add the reservation to. eg:
                 ["cloudbolt.io", "cloudboltsoftware.com"]
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get DNS Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'dnsPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -362,12 +365,12 @@ class OneFuseManager(object):
         workspace_url = links["workspace"]["href"]
         rendered_zones = []
         for zone in zones:
-            rendered_zone = self.render(zone, properties_stack)
+            rendered_zone = self.render(zone, template_properties)
             rendered_zones.append(rendered_zone)
         # Request DNS
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
             "name": name,
             "value": value,
@@ -391,7 +394,7 @@ class OneFuseManager(object):
         return path
 
     # IPAM Functions
-    def provision_ipam(self, policy_name: str, properties_stack: dict,
+    def provision_ipam(self, policy_name: str, template_properties: dict,
                        hostname: str, tracking_id: str = ""):
         """
         Provision an IPAM Reservation
@@ -400,18 +403,18 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse IPAM Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         hostname : str
             Hostname that the IPAM reservation is being made for. Will be set
             in the downstream IPAM provider
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get IPAM Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'ipamPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -421,7 +424,7 @@ class OneFuseManager(object):
         # Request IPAM
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
             "hostname": hostname
         }
@@ -442,8 +445,138 @@ class OneFuseManager(object):
         self.deprovision_mo(path)
         return path
 
+    # Pluggable Modules
+    def export_pluggable_module(self, module_name: str, save_path: str):
+        """
+        Export a Pluggable Module to a file path. The exported module will be
+        saved to a file
+
+        Parameters
+        ----------
+        module_name : str
+            The name of the module to export
+        save_path : str
+            File path to save the exported module zip file to
+            Windows: 'C:\\temp\\onefuse_backups\\'
+            Linux: '/tmp/onefuse_backups/'
+        """
+        path = 'modules'
+        module = self.get_policy_by_name(path, module_name)
+        module_id = module["id"]
+        export_path = f'/{path}/{module_id}/export/'
+        response = self.post(export_path, stream=True)
+        response.raise_for_status()
+        if not os.path.exists(os.path.dirname(save_path)):
+            try:
+                os.makedirs(os.path.dirname(save_path))
+            except OSError as exc:  # Guard against race condition
+                if exc.errno != errno.EEXIST:
+                    raise
+        file_path = f'{save_path}{module_name}.zip'
+        if os.path.isfile(file_path):
+            raise OneFuseError(f'Zip file already exists for module_name: '
+                               f'{module_name} in save_path: {save_path}')
+        with open(file_path, 'wb') as fd:
+            for chunk in response.iter_content(chunk_size=128):
+                fd.write(chunk)
+        self.logger.info(f'Module: {module_name} has been saved to: '
+                         f'{file_path}')
+        return None
+
+    def upload_pluggable_module(self, file_path: str,
+                                replace_existing: bool = False):
+        """
+        Upload a Pluggable Module zip file from a file path.
+
+        Parameters
+        ----------
+        file_path : str
+            File path to the module zip file
+            Windows: 'C:\\temp\\onefuse_backups\\modules\\f5.zip'
+            Linux: '/tmp/onefuse_backups/modules/f5.zip'
+        replace_existing : bool
+            Boolean to replace the module if it already exists. If False is
+            selected, this will create a new module with a similar name.
+            Default - False
+
+        """
+        path = '/modules/'
+        if os.name == 'nt':
+            path_char = '\\'
+        else:
+            path_char = '/'
+        file_object = open(file_path, 'rb')
+        files = {'zipFile': ('upload.zip', file_object)}
+        data = {'replaceExisting': json.dumps(replace_existing)}
+        try:
+            # Can't use the ofm.post method here, file uploads require
+            # different headers than are provided by the class
+            response = requests.post(
+                self.base_url + path,
+                auth=HTTPBasicAuth(self.username, self.password),
+                verify=self.verify_certs,
+                data=data,
+                files=files
+            )
+            response.raise_for_status()
+        except HTTPError as err:
+            err_msg = (f'Request failed for path: {path}, Error: '
+                       f'{sys.exc_info()[0]}. {sys.exc_info()[1]}'
+                       f', line: {sys.exc_info()[2].tb_lineno}. Messages: ')
+            errors = json.loads(err.response.content)["errors"]
+            err_msg += ','.join(error["message"] for error in errors)
+            raise OneFuseError(err_msg)
+        return response
+
+    def provision_module(self, policy_name: str, template_properties: dict,
+                         tracking_id: str = ""):
+        """
+        Provision a managed object by executing a OneFuse Pluggable Module
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Pluggable Module Policy Name
+        template_properties : dict
+            Stack of properties used in OneFuse policy execution
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get CMDB Policy by Name
+        rendered_policy_name = self.render(policy_name, template_properties)
+        policy_path = 'modulePolicies'
+        policy_json = self.get_policy_by_name(policy_path,
+                                              rendered_policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Request Scripting
+        template = {
+            "policy": policy_url,
+            "templateProperties": template_properties,
+            "workspace": workspace_url,
+        }
+        path = '/moduleManagedObjects/'
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def deprovision_module(self, mo_id: int):
+        """
+        De-Provision a Pluggable Module Managed Object
+
+        Parameters
+        ----------
+        mo_id : str
+            OneFuse ID of the IPAM Reservation to be de-provisioned
+        """
+        path = f'/moduleManagedObjects/{mo_id}/'
+        self.deprovision_mo(path)
+        return path
+
     # Naming Functions
-    def provision_naming(self, policy_name: str, properties_stack: dict,
+    def provision_naming(self, policy_name: str, template_properties: dict,
                          tracking_id: str = ""):
         """
         Provision a Name
@@ -452,15 +585,15 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse Naming Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get Naming Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'namingPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -470,7 +603,7 @@ class OneFuseManager(object):
         # Request Machine Custom Name
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
         }
         path = "/customNames/"
@@ -491,7 +624,7 @@ class OneFuseManager(object):
         return path
 
     # Property Toolkit
-    def get_sps_properties(self, properties_stack: dict,
+    def get_sps_properties(self, template_properties: dict,
                            upstream_property: str = "",
                            ignore_properties: list = None):
         """
@@ -501,7 +634,7 @@ class OneFuseManager(object):
 
         Parameters
         ----------
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         upstream_property : str
             You can pass in a property corresponding to an upstream provider to
@@ -527,8 +660,8 @@ class OneFuseManager(object):
                 ignore_properties = []
             # Get Unsorted list of keys that match OneFuse_SPS_
             sps_keys = []
-            pattern = re.compile(STATIC_PROPERTY_SET_PREFIX)
-            for key in properties_stack.keys():
+            pattern = re.compile(PROPERTY_SET_PREFIX)
+            for key in template_properties.keys():
                 result = pattern.match(key)
                 if result is not None:
                     sps_keys.append(key)
@@ -541,7 +674,7 @@ class OneFuseManager(object):
             for key in sps_keys:
                 self.logger.debug(
                     f'Starting get_sps_all_properties key: {key}')
-                sps_name = properties_stack[key]
+                sps_name = template_properties[key]
                 sps_json = self.get_sps_by_name(sps_name)
                 props = sps_json["properties"]
                 for prop_key in props.keys():
@@ -560,7 +693,7 @@ class OneFuseManager(object):
                         except:
                             sps_properties[prop_key] = props[prop_key]
         except Exception:
-            raise Exception(
+            raise OneFuseError(
                 f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
                 f'line: {sys.exc_info()[2].tb_lineno}')
 
@@ -568,7 +701,7 @@ class OneFuseManager(object):
 
     def get_sps_by_name(self, sps_name: str):
         """
-        Return a OneFuse Static Property set by the name
+        Return a OneFuse Property set by the name
 
         Parameters
         ----------
@@ -581,19 +714,19 @@ class OneFuseManager(object):
         sps_json = response.json()
 
         if sps_json["count"] > 1:
-            raise Exception(f"More than one Static Property Set was returned "
-                            f"matching the name: {sps_name}. Response: "
-                            f"{json.dumps(sps_json)}")
+            raise (f"More than one Property Set was returned "
+                   f"matching the name: {sps_name}. Response: "
+                   f"{json.dumps(sps_json)}")
 
         if sps_json["count"] == 0:
-            raise Exception(
-                f"No static property sets were returned matching the"
+            raise OneFuseError(
+                f"No property sets were returned matching the"
                 f" name: {sps_name}. Response: "
                 f"{json.dumps(sps_json)}")
         sps_json = sps_json["_embedded"]["propertySets"][0]
         return sps_json
 
-    def get_create_properties(self, properties_stack: dict):
+    def get_create_properties(self, template_properties: dict):
         """
         Parse a dict to find any properties prepended with
         OneFuse_CreateProperties_. If found, extract the key:value out of the
@@ -614,17 +747,17 @@ class OneFuseManager(object):
 
         Parameters
         ----------
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         """
         create_properties = {}
-        pattern = re.compile("OneFuse_CreateProperties_")
-        for key in properties_stack.keys():
+        pattern = re.compile('OneFuse_CreateProperties_')
+        for key in template_properties.keys():
             result = pattern.match(key)
             if result is not None:
                 self.logger.debug(f'Starting JSON parse of key: {key}, '
-                                  f'value: {properties_stack[key]}')
-                value_obj = properties_stack[key]
+                                  f'value: {template_properties[key]}')
+                value_obj = template_properties[key]
                 self.logger.debug(f'Create Props Object: {value_obj}')
                 if type(value_obj) == str:
                     value_obj = json.loads(value_obj)
@@ -633,7 +766,7 @@ class OneFuseManager(object):
         return create_properties
 
     # Scripting
-    def provision_scripting(self, policy_name: str, properties_stack: dict,
+    def provision_scripting(self, policy_name: str, template_properties: dict,
                             tracking_id: str = ""):
         """
         Provision a Scripting Deployment
@@ -642,15 +775,15 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse Scripting Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get Scripting Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'scriptingPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -660,7 +793,7 @@ class OneFuseManager(object):
         # Request Scripting
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
         }
         path = "/scriptingDeployments/"
@@ -681,7 +814,7 @@ class OneFuseManager(object):
         return path
 
     # ServiceNow CMDB Functions
-    def provision_cmdb(self, policy_name: str, properties_stack: dict,
+    def provision_cmdb(self, policy_name: str, template_properties: dict,
                        tracking_id: str = ""):
         """
         Provision a ServiceNow CMDB Deployment
@@ -690,15 +823,15 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse ServiceNow CMDB Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get CMDB Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         policy_path = 'servicenowCMDBPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -708,14 +841,14 @@ class OneFuseManager(object):
         # Request Scripting
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
         }
         path = "/servicenowCMDBDeployments/"
         response_json = self.request(path, template, tracking_id)
         return response_json
 
-    def update_cmdb(self, properties_stack: dict, cmdb_id: int):
+    def update_cmdb(self, template_properties: dict, cmdb_id: int):
         """
         Update a ServiceNow CMDB Deployment
 
@@ -723,7 +856,7 @@ class OneFuseManager(object):
         ----------
         cmdb_id : str
             OneFuse ID of the ServiceNow CMDB deployment to be updated
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         """
         # Get Existing Object
@@ -735,7 +868,7 @@ class OneFuseManager(object):
         # Template
         template = {
             "policy": current_json["_links"]["policy"]["href"],
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": current_json["_links"]["workspace"]["href"],
         }
         # Send Put request
@@ -756,7 +889,7 @@ class OneFuseManager(object):
         return path
 
     # vRealize Automation Functions
-    def provision_vra(self, policy_name: str, properties_stack: dict,
+    def provision_vra(self, policy_name: str, template_properties: dict,
                       deployment_name: str, tracking_id: str = ""):
         """
         Provision a OneFuse vRA Deployment
@@ -765,19 +898,19 @@ class OneFuseManager(object):
         ----------
         policy_name : str
             OneFuse vRA Policy Name
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
         deployment_name : str
             Name to set in vRA for the deployment being provisioned
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
         """
         # Get CMDB Policy by Name
-        rendered_policy_name = self.render(policy_name, properties_stack)
+        rendered_policy_name = self.render(policy_name, template_properties)
         rendered_deployment_name = self.render(deployment_name,
-                                               properties_stack)
+                                               template_properties)
         policy_path = 'vraPolicies'
         policy_json = self.get_policy_by_name(policy_path,
                                               rendered_policy_name)
@@ -787,7 +920,7 @@ class OneFuseManager(object):
         # Request Scripting
         template = {
             "policy": policy_url,
-            "templateProperties": properties_stack,
+            "templateProperties": template_properties,
             "workspace": workspace_url,
             "deploymentName": rendered_deployment_name
         }
@@ -811,7 +944,7 @@ class OneFuseManager(object):
         return path
 
     # Utilities common to all Python Platforms
-    def render(self, template: str, properties_stack: dict):
+    def render(self, template: str, template_properties: dict):
         """
         Leverage the OneFuse template tester to render any jinja2 syntax
 
@@ -819,7 +952,7 @@ class OneFuseManager(object):
         ----------
         template : str
             The string to be rendered. Ex: "This is {{ owner }}'s deployment"
-        properties_stack : dict
+        template_properties : dict
             Stack of properties used in OneFuse policy execution
             Example for above:
             {
@@ -832,7 +965,7 @@ class OneFuseManager(object):
                 return template
             template = {
                 "template": template,
-                "templateProperties": properties_stack,
+                "templateProperties": template_properties,
             }
             response = self.post("/templateTester/", json=template)
             response.raise_for_status()
@@ -844,7 +977,7 @@ class OneFuseManager(object):
                 f'line: {sys.exc_info()[2].tb_lineno}. Template: '
                 f'{template}')
             self.logger.error(error_string)
-            raise Exception(f'OneFuse Template Render failed. {error_string}')
+            raise
 
     def get_job_json(self, job_id: int):
         """
@@ -861,7 +994,8 @@ class OneFuseManager(object):
         return job_json
 
     def wait_for_job_completion(self, job_response: requests.models.Response,
-                                path: str, method: str, sleep_seconds: int = 5):
+                                path: str, method: str,
+                                sleep_seconds: int = 5):
         """
         Continuously poll a OneFuse job until completion. Raise a TimeoutError
         when the max timeout per module is exceeded. Returns the json for the
@@ -908,11 +1042,16 @@ class OneFuseManager(object):
                 mo_json = json.loads(mo_string)
                 mo_json["trackingId"] = job_json["jobTrackingId"]
             else:
-                error_msg = job_json["responseInfo"]["payload"]
-                error_string = f'OneFuse job failure. {job_state}: {error_msg}'
+                payload = json.loads(job_json["responseInfo"]["payload"])
+                error_string = f'OneFuse job failure. State: {job_state}, ' \
+                               f'Error Code: {payload["code"]}, Errors: '
+                errors = payload["errors"]
+                error_string += ', '.join(err["message"] for err in errors)
                 self.logger.error(
                     f'OneFuse job failure. Error: {error_string}')
-                raise Exception(error_string)
+                if error_string.find("Required Variable is missing") > -1:
+                    raise RequiredParameterMissing(error_string)
+                raise OneFuseError(error_string)
         # Non-Async (ex: SPS) Returns a 201
         else:
             if method == 'delete':
@@ -939,23 +1078,24 @@ class OneFuseManager(object):
         path : str
             The REST path for the policy executed. ex: '/customNames/'
         template : dict
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID. If not passed, one will be returned from the
             execution. Tracking IDs allow for grouping all executions for a
             single object
-        method : str
-            The type of method called for the original job. ex: "put"
+        method : str - optional
+            The type of method called for the original job. ex: 'put'. Default
+            is 'post'
         """
         self.add_tracking_id_to_headers(tracking_id)
         self.logger.debug(f'Submitting {method} request to path: {path} with '
-                          f' properties_stack: {template}')
+                          f' template_properties: {template}')
         try:
             if method == 'post':
                 response = self.post(path, json=template)
             elif method == 'put':
                 response = self.put(path, json=template)
             else:
-                raise Exception(
+                raise OneFuseError(
                     f'This action only supports post and put calls. '
                     f'Requested method: {method}')
             response.raise_for_status()
@@ -965,12 +1105,15 @@ class OneFuseManager(object):
                 sleep_seconds = 5
             mo_json = self.wait_for_job_completion(response, path, method,
                                                    sleep_seconds)
+        except HTTPError as err:
+            err_msg = (f'Request failed for path: {path}, Error: '
+                       f'{sys.exc_info()[0]}. {sys.exc_info()[1]}'
+                       f', line: {sys.exc_info()[2].tb_lineno}. Messages: ')
+            errors = json.loads(err.response.content)["errors"]
+            err_msg += ','.join(error["message"] for error in errors)
+            raise OneFuseError(err_msg)
         except:
-            error_string = (
-                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
-                f'line: {sys.exc_info()[2].tb_lineno}')
-            self.logger.error(error_string)
-            raise Exception(f'OneFuse Async call failed. {error_string}')
+            raise
         self.logger.debug(f'mo_json: {mo_json}')
         return mo_json
 
@@ -997,14 +1140,14 @@ class OneFuseManager(object):
         policies_json = policies_response.json()
 
         if policies_json["count"] > 1:
-            raise Exception(f"More than one policy was returned matching "
-                            f"the name: {field_value}. Response: "
-                            f"{json.dumps(policies_json)}")
+            raise OneFuseError(f"More than one policy was returned matching "
+                               f"the name: {field_value}. Response: "
+                               f"{json.dumps(policies_json)}")
 
         if policies_json["count"] == 0:
-            raise Exception(f"No policies were returned matching the "
-                            f"name: {field_value}. Response: "
-                            f"{json.dumps(policies_json)}")
+            raise OneFuseError(f"No policies were returned matching the "
+                               f"name: {field_value}. Response: "
+                               f"{json.dumps(policies_json)}")
         policy_json = policies_json["_embedded"][resource_path][0]
         return policy_json
 
@@ -1044,9 +1187,10 @@ class OneFuseManager(object):
             self.logger.info(f"Object deleted from the OneFuse database. "
                              f"Path: {path}")
         except:
-            self.logger.error(
-                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}'
-                f', line: {sys.exc_info()[2].tb_lineno}')
+            self.logger.error(f'Deprovision failed for path: {path} '
+                              f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}'
+                              f', line: {sys.exc_info()[2].tb_lineno}')
+            raise
 
     def get_tracking_id_from_mo(self, path: str):
         """
@@ -1070,10 +1214,8 @@ class OneFuseManager(object):
             job_json = job_response.json()
             tracking_id = job_json["jobTrackingId"]
         except:
-            self.logger.error(
-                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}'
-                f', line: {sys.exc_info()[2].tb_lineno}')
-            self.logger.error('Tracking ID could not be determined for MO.')
+            self.logger.info('Tracking ID could not be determined for MO. '
+                             'OneFuse will create a Tracking ID')
             tracking_id = ""
         return tracking_id
 
@@ -1115,7 +1257,7 @@ class OneFuseManager(object):
 
         Parameters
         ----------
-        tracking_id : str
+        tracking_id : str - optional
             OneFuse Tracking ID.
         """
         if tracking_id is not None and tracking_id != "":
@@ -1129,6 +1271,29 @@ class OneFuseManager(object):
         tracking_id = uuid1().__str__()
         self.logger.debug(f'Tracking id created: {tracking_id}')
         return tracking_id
+
+    def get_onefuse_version(self):
+        """
+        Get the version of the current instantiated OneFuse Appliance
+        """
+        response = self.get('/productInfo')
+        response.raise_for_status()
+        response_json = response.json()
+        version = response_json["version"]
+        return version
+
+    def get_onefuse_instance_id(self):
+        response = self.get('/productInfo')
+        response.raise_for_status()
+        response_json = response.json()
+        try:
+            instance_id = response_json["instanceId"]
+            return instance_id
+        except KeyError:
+            self.logger.info(f'Unable to return Instance ID, version is < '
+                             f'1.4')
+            return None
+
 
 if __name__ == '__main__':
     username = sys.argv[1]  # 'OneFuse Username'
