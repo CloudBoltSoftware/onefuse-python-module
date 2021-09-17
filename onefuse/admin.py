@@ -963,19 +963,61 @@ class OneFuseManager(object):
         try:
             if template.find('{%') == -1 and template.find('{{') == -1:
                 return template
-            template = {
+            json_template = {
                 "template": template,
                 "templateProperties": template_properties,
             }
-            response = self.post("/templateTester/", json=template)
+            response = self.post("/templateTester/", json=json_template)
             response.raise_for_status()
             response_json = response.json()
-            return response_json.get("value")
+            return response_json.get("value"), \
+                   response_json.get("resolvedProperties")
         except:
             error_string = (
                 f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
                 f'line: {sys.exc_info()[2].tb_lineno}. Template: '
                 f'{template}')
+            self.logger.error(error_string)
+            raise
+
+    def resolve_properties(self, template_properties: dict):
+        """
+        Leverage the OneFuse template tester to render an entire template
+        properties stack. Returns rendered properties. Will find and expand any
+        properties prepended with 1FPS_
+
+        Parameters
+        ----------
+        template_properties : dict
+            Stack of properties used in OneFuse policy execution
+            Example:
+            {
+                "owner": "jdoe",
+                "text": "This is {{owner}}'s machine",
+                "1FPS_env": "dev"
+            }
+            Result:
+            {
+                "owner": "jdoe",
+                "text": "This is jdoe's deployment",
+                "nameEnv": "dev",                       # From 1FPS_env
+                "ipamEnv": "Development",               # From 1FPS_env
+                "dnsZone": "dev.cloudbolt.io"           # From 1FPS_env
+            }
+        """
+        try:
+            json_template = {
+                "template": "",
+                "templateProperties": template_properties,
+            }
+            response = self.post("/templateTester/", json=json_template)
+            response.raise_for_status()
+            response_json = response.json()
+            return response_json.get("resolvedProperties")
+        except:
+            error_string = (
+                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
+                f'line: {sys.exc_info()[2].tb_lineno}.')
             self.logger.error(error_string)
             raise
 
