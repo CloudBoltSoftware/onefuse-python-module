@@ -944,9 +944,10 @@ class OneFuseManager(object):
         return path
 
     # Utilities common to all Python Platforms
-    def render(self, template: str, template_properties: dict):
+    def render(self, template: str, template_properties: dict,
+               return_type: str = "value"):
         """
-        Leverage the OneFuse template tester to render any jinja2 syntax
+        Leverage the OneFuse template tester to render any jinja2 syntax.
 
         Parameters
         ----------
@@ -959,6 +960,11 @@ class OneFuseManager(object):
                 "owner": "jdoe"
             }
             Result: "This is jdoe's deployment"
+        return_type : str
+            Optional. Valid Values: "value", "resolvedProperties". "value" will
+            return the result of the rendered template, "resolvedProperties"
+            will return the entire resolved properties stack (Dynamic Property
+            Set). Default: "value"
         """
         try:
             if template.find('{%') == -1 and template.find('{{') == -1:
@@ -970,8 +976,7 @@ class OneFuseManager(object):
             response = self.post("/templateTester/", json=json_template)
             response.raise_for_status()
             response_json = response.json()
-            return response_json.get("value"), \
-                   response_json.get("resolvedProperties")
+            return response_json.get(return_type)
         except:
             error_string = (
                 f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
