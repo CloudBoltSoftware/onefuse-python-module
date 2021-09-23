@@ -331,6 +331,11 @@ class Utilities(object):
                 key_val = key.replace('OneFuse_SPS_', '1FPS_')
                 properties_stack[key_val] = properties_stack.pop(key)
         """
+        try:
+            # If annotation is set, it isn't in a JSON friendly format
+            properties_stack["annotation"] = ""
+        except KeyError:
+            pass
         return properties_stack
 
     def get_network_info(self, resource):
@@ -370,6 +375,8 @@ class Utilities(object):
             try:
                 network_info[index_prop]["fqdn"] = (f'{resource.hostname}.'
                                                     f'{resource.dns_domain}')
+                network_info[index_prop]["target"] = network_info[
+                                                            index_prop]["fqdn"]
             except Exception:
                 pass
             try:
@@ -484,7 +491,7 @@ class Utilities(object):
                         f'Scripting Output deleted for provisioning.')
                 except:
                     self.logger.debug(f'MO does not include provisioningDetails '
-                                    f'to be cleaned.')
+                                      f'to be cleaned.')
                 try:
                     managed_object["deprovisioningDetails"]["output"] = []
                     self.logger.debug(
@@ -493,6 +500,50 @@ class Utilities(object):
                     self.logger.debug(
                         f'MO does not include deprovisioningDetails '
                         f'to be cleaned.')
+        elif run_type == "pluggable_module":
+            # For Pluggable Modules, we are going to recreate the MO itself to
+            # only include relevant data
+            mo = managed_object
+            managed_object = {}
+            try:
+                managed_object["_links"] = mo["_links"]
+            except:
+                raise OneFuseError("Links not included in MO")
+            try:
+                managed_object["archived"] = mo["archived"]
+            except:
+                raise OneFuseError("Archived not included in MO")
+            try:
+                managed_object["endpoint"] = mo["endpoint"]
+            except:
+                raise OneFuseError("Endpoint not included in MO")
+            try:
+                managed_object["id"] = mo["id"]
+            except:
+                raise OneFuseError("ID not included in MO")
+            try:
+                managed_object["name"] = mo["name"]
+            except:
+                raise OneFuseError("Name not included in MO")
+            try:
+                managed_object["trackingId"] = mo["trackingId"]
+            except:
+                raise OneFuseError("Tracking ID not included in MO")
+            try:
+                managed_object["OneFuse_PluggableModuleName"] = mo[
+                    "OneFuse_PluggableModuleName"]
+            except:
+                raise OneFuseError("Module Name not included in MO")
+            try:
+                managed_object["OneFuse_Suffix"] = mo["OneFuse_Suffix"]
+            except:
+                raise OneFuseError("Suffix not included in MO")
+            try:
+                managed_object["OneFuse_CBHookPointString"] = mo[
+                    "OneFuse_CBHookPointString"]
+            except:
+                raise OneFuseError("CB Hook String not included in MO")
+            managed_object["managedObjectTruncated"] = True
         else:
             self.logger.debug(f'Invalid run_type: {run_type}')
         return managed_object

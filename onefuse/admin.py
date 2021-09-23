@@ -234,7 +234,7 @@ class OneFuseManager(object):
 
         Parameters
         ----------
-        ad_id : str
+        ad_id : int
             OneFuse ID of the Active Directory object to be moved
         """
         path = f'/microsoftADComputerAccounts/{ad_id}/'
