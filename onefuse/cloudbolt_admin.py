@@ -1,4 +1,4 @@
-from infrastructure.models import CustomField
+from infrastructure.models import CustomField, Server
 
 if __name__ == '__main__':
     import django
@@ -12,6 +12,7 @@ from onefuse.admin import OneFuseManager
 from utilities.models import ConnectionInfo
 from utilities.logger import ThreadLogger
 from django.db.models import Q
+from onefuse.exceptions import OneFuseError
 
 
 class CbOneFuseManager(OneFuseManager):
@@ -76,7 +77,7 @@ class CbOneFuseManager(OneFuseManager):
         except:
             err_str = (f'ConnectionInfo could not be found with name: '
                        f'{conn_info_name}, and label onefuse')
-            raise Exception(err_str)
+            raise OneFuseError(err_str)
         try:
             logger = kwargs["logger"]
         except KeyError:
@@ -112,52 +113,68 @@ class CbOneFuseManager(OneFuseManager):
         utilities = Utilities(self.logger)
         for key in properties.keys():
             rendered_key = self.render(key, properties_stack)
-            if type(properties[key]) == dict:
-                props_key = json.dumps(properties[key])
-            else:
-                props_key = properties[key]
-            rendered_value = self.render(props_key, properties_stack)
-            if (rendered_key is not None and rendered_key != "" and
-                    rendered_value is not None and rendered_value != ""):
-                if rendered_key == 'os_build':
-                    from externalcontent.models import OSBuild
-                    current_os_build = resource.os_build
-                    if current_os_build.os_family:
-                        print("test")
-                    os_build = OSBuild.objects.get(name=rendered_value)
-                    self.logger.debug(f'Setting OS build ID to: {os_build.id}')
-                    # Update OS Build
-                    resource.os_build_id = os_build.id
-                    resource.save()
-                    self.logger.debug(f'Setting OS Family ID to: '
-                                      f'{os_build.os_family.id}')
-                    # Update OS Family
-                    resource.os_family_id = os_build.os_family.id
-                    resource.save()
-                    # Update OS Credentials
-                    os_build_attrs = os_build.osba_for_resource_handler(
-                        resource.resource_handler)
-                    resource.username = os_build_attrs.username
-                    resource.password = os_build_attrs.password
-                    resource.save()
-                elif rendered_key == 'environment':
-                    # Not working. Environment appears to change, but when VM
-                    # builds, it is set to original environment
-                    from infrastructure.models import Environment
-                    resource.environment = Environment.objects.filter(
-                        name=rendered_value).first()
+            overwrite_property = False
+            try:
+                if (properties_stack[rendered_key] and
+                        properties_stack[rendered_key] !=
+                        properties[rendered_key]):
+                    # Property exists in current stack, but value is different
+                    overwrite_property = True
+            except KeyError:
+                # Property Doesn't exist in current Properties stack
+                overwrite_property = True
+            # Only want to overwrite the property if new value is different
+            # than existing
+            if overwrite_property:
+                if type(properties[key]) == dict:
+                    props_key = json.dumps(properties[key])
                 else:
-                    try:
-                        resource.set_value_for_custom_field(rendered_key,
-                                                            rendered_value)
-                    except:
-                        # If adding param to the resource fails, try to create
-                        utilities.check_or_create_cf(rendered_key)
-                        resource.set_value_for_custom_field(rendered_key,
-                                                            rendered_value)
-                    self.logger.debug(f'Setting property: {rendered_key} to: '
-                                      f'{rendered_value}')
-                properties_stack[rendered_key] = rendered_value
+                    props_key = properties[key]
+                rendered_value = self.render(props_key, properties_stack)
+                if (rendered_key is not None and rendered_key != "" and
+                        rendered_value is not None and rendered_value != ""):
+                    if rendered_key == 'os_build':
+                        if type(resource) == Server:
+                            from externalcontent.models import OSBuild
+                            current_os_build = resource.os_build
+                            if current_os_build.os_family:
+                                print("test")
+                            os_build = OSBuild.objects.get(name=rendered_value)
+                            self.logger.debug(f'Setting OS build ID to: '
+                                              f'{os_build.id}')
+                            # Update OS Build
+                            resource.os_build_id = os_build.id
+                            resource.save()
+                            self.logger.debug(f'Setting OS Family ID to: '
+                                              f'{os_build.os_family.id}')
+                            # Update OS Family
+                            resource.os_family_id = os_build.os_family.id
+                            resource.save()
+                            # Update OS Credentials
+                            os_build_attrs = os_build.osba_for_resource_handler(
+                                resource.resource_handler)
+                            resource.username = os_build_attrs.username
+                            resource.password = os_build_attrs.password
+                            resource.save()
+                    elif rendered_key == 'environment':
+                        # Not working. Environment appears to change, but when
+                        # VM builds, it is set to original environment
+                        from infrastructure.models import Environment
+                        resource.environment = Environment.objects.filter(
+                            name=rendered_value).first()
+                    else:
+                        try:
+                            resource.set_value_for_custom_field(rendered_key,
+                                                                rendered_value)
+                        except:
+                            # If adding param to the resource fails, try to
+                            # create
+                            utilities.check_or_create_cf(rendered_key)
+                            resource.set_value_for_custom_field(rendered_key,
+                                                                rendered_value)
+                        self.logger.debug(f'Setting property: {rendered_key} '
+                                          f'to: {rendered_value}')
+                    properties_stack[rendered_key] = rendered_value
         resource.save()
         return properties_stack
 
@@ -188,7 +205,7 @@ class Utilities(object):
                         f'OneFuse key was found but value is formatted wrong. '
                         f'Key: {key}, Value: {key_value}')
                     self.logger.error(err)
-                    raise Exception(err)
+                    raise OneFuseError(err)
                 endpoint = key_value.split(":")[0]
                 policy = key_value.split(":")[1]
                 try:
@@ -233,21 +250,26 @@ class Utilities(object):
 
         # Add Resource variables to the properties stack
         for key in list(resource_values):
-            if (
-                    key.find("_") != 0
-            ):  # Ignoring hidden when building the payload to pass to OneFuse
+            if key.find("_") != 0:
+                # Ignoring hidden when building the payload to pass to OneFuse
                 if (
                         key.split("_")[-1] == "id"
                         and key != "id"
                         and resource_values[key] is not None
                         and resource_values[key] != ""
-                        and key != "resource_handler_svr_id"
                 ):
-                    f_key_name = key[0:-3]
-                    key_name = f_key_name
-                    key_value = getattr(resource, f_key_name)
-                    if "password" in key_name.lower():
-                        key_value = "******"
+                    try:
+                        # Get the actual object if the key is an ID key
+                        f_key_name = key[0:-3]
+                        key_name = f_key_name
+                        key_value = getattr(resource, f_key_name)
+                        if "password" in key_name.lower():
+                            key_value = "******"
+                    except AttributeError:
+                        # If this ends up here, it failed getting the value
+                        # So we will just write the ID to the payload
+                        key_name = key
+                        key_value = resource_values[key]
                 else:
                     key_name = key
                     key_value = resource_values[key]
@@ -284,26 +306,36 @@ class Utilities(object):
             properties_stack["owner_email"] = resource.owner.user.email
         except:
             self.logger.warning("Owner email could not be determined")
-        try:
-            network_info = self.get_network_info(resource)
-            for key in network_info.keys():
-                properties_stack[key] = network_info[key]
-        except:
-            self.logger.warning("Unable to determine Network Info for Server.")
-        try:
-            hardware_info = self.get_hardware_info(resource)
-            for key in hardware_info.keys():
-                properties_stack[key] = hardware_info[key]
-        except:
-            self.logger.warning('Unable to determine Hardware Info for Server.')
+        if type(resource) == Server:
+            try:
+                network_info = self.get_network_info(resource)
+                for key in network_info.keys():
+                    properties_stack[key] = network_info[key]
+            except:
+                self.logger.warning("Unable to determine Network Info for "
+                                    "Server.")
+            try:
+                hardware_info = self.get_hardware_info(resource)
+                for key in hardware_info.keys():
+                    properties_stack[key] = hardware_info[key]
+            except:
+                self.logger.warning('Unable to determine Hardware Info for '
+                                    'Server.')
         if hook_point is not None:
             properties_stack["hook_point"] = hook_point
 
+        """ Commenting out until able to validate PTK
         for key in properties_stack.keys():
             if key.find("OneFuse_SPS_") == 0:
                 # Replace properties with OneFuse_SPS_ with 1FPS_
                 key_val = key.replace('OneFuse_SPS_', '1FPS_')
                 properties_stack[key_val] = properties_stack.pop(key)
+        """
+        try:
+            # If annotation is set, it isn't in a JSON friendly format
+            properties_stack["annotation"] = ""
+        except KeyError:
+            pass
         return properties_stack
 
     def get_network_info(self, resource):
@@ -343,6 +375,8 @@ class Utilities(object):
             try:
                 network_info[index_prop]["fqdn"] = (f'{resource.hostname}.'
                                                     f'{resource.dns_domain}')
+                network_info[index_prop]["target"] = network_info[
+                                                            index_prop]["fqdn"]
             except Exception:
                 pass
             try:
@@ -457,7 +491,7 @@ class Utilities(object):
                         f'Scripting Output deleted for provisioning.')
                 except:
                     self.logger.debug(f'MO does not include provisioningDetails '
-                                    f'to be cleaned.')
+                                      f'to be cleaned.')
                 try:
                     managed_object["deprovisioningDetails"]["output"] = []
                     self.logger.debug(
@@ -466,6 +500,39 @@ class Utilities(object):
                     self.logger.debug(
                         f'MO does not include deprovisioningDetails '
                         f'to be cleaned.')
+        elif run_type == "pluggable_module":
+            max_characters = 6000
+            clean_details = len(json.dumps(managed_object)) > max_characters
+            original_mo = dict(managed_object)
+            safe_props = ["_links", "id", "name", "archived", "trackingId",
+                          "OneFuse_PluggableModuleName", "OneFuse_Suffix",
+                          "OneFuse_CBHookPointString", "endpoint",
+                          "managedObjectTruncated"]
+            job_results_keys = ['provisioningJobResults', 'updateJobResults',
+                                'deprovisioningJobResults']
+
+            if clean_details:
+                managed_object["managedObjectTruncated"] = True
+                for key in list(managed_object):
+                    if key not in safe_props:
+                        del managed_object[key]
+
+                for key in job_results_keys:
+                    temp_mo = dict(managed_object)
+                    value_list = original_mo[key]
+                    if value_list and type(value_list) == list:
+                        list_length = len(value_list)
+                        value = value_list[-1]
+                        if type(value) == dict:
+                            last_element = dict(value)
+                        else:
+                            last_element = value
+                        last_element["originalIndexNumber"] = list_length
+                        temp_mo[key] = [last_element]
+                        if len(json.dumps(temp_mo)) < max_characters:
+                            managed_object = dict(temp_mo)
+            else:
+                managed_object["managedObjectTruncated"] = False
         else:
             self.logger.debug(f'Invalid run_type: {run_type}')
         return managed_object

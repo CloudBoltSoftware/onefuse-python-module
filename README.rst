@@ -19,6 +19,10 @@ To install the Latest OneFuse Python Module: ::
 
     $ pip install onefuse
 
+To upgrade OneFuse to the latest version if OneFuse is already installed: ::
+
+    $ pip install onefuse --upgrade
+
 Usage
 -----
 
@@ -31,16 +35,11 @@ Import and instantiate a OneFuseManager::
 
 Accepted optional kwargs
 -------------------------
-- source - default 'PYTHON' - allows to specify source so that this class
-    can be called by other modules (CloudBolt, etc.). All OneFuse jobs will
-    show this value as the Source of the job
+- source - default 'PYTHON' - allows to specify source so that this class can be called by other modules (CloudBolt, etc.). All OneFuse jobs will show this value as the Source of the job
 - protocol - default 'https' - Allows to specify non-standard protocol
 - port - default 443 - Allows to specify non-standard port
-- verify_certs - default False - Allows to specify whether or not to verify
-    OneFuse certs
-- logger - allows you to pass in logger information. By default will log to
-    onefuse.log as well as to console at the LOG_LEVEL set in
-    configuration.globals
+- verify_certs - default False - Allows to specify whether or not to verify OneFuse certs
+- logger - allows you to pass in logger information. By default will log to onefuse.log as well as to console at the LOG_LEVEL set in configuration.globals
 
 Authentication, headers, and url creation is handled within this class,
 freeing the caller from having to deal with these tasks.

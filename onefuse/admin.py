@@ -234,7 +234,7 @@ class OneFuseManager(object):
 
         Parameters
         ----------
-        ad_id : str
+        ad_id : int
             OneFuse ID of the Active Directory object to be moved
         """
         path = f'/microsoftADComputerAccounts/{ad_id}/'
@@ -944,9 +944,10 @@ class OneFuseManager(object):
         return path
 
     # Utilities common to all Python Platforms
-    def render(self, template: str, template_properties: dict):
+    def render(self, template: str, template_properties: dict,
+               return_type: str = "value"):
         """
-        Leverage the OneFuse template tester to render any jinja2 syntax
+        Leverage the OneFuse template tester to render any jinja2 syntax.
 
         Parameters
         ----------
@@ -959,23 +960,69 @@ class OneFuseManager(object):
                 "owner": "jdoe"
             }
             Result: "This is jdoe's deployment"
+        return_type : str
+            Optional. Valid Values: "value", "resolvedProperties". "value" will
+            return the result of the rendered template, "resolvedProperties"
+            will return the entire resolved properties stack (Dynamic Property
+            Set). Default: "value"
         """
         try:
             if template.find('{%') == -1 and template.find('{{') == -1:
                 return template
-            template = {
+            json_template = {
                 "template": template,
                 "templateProperties": template_properties,
             }
-            response = self.post("/templateTester/", json=template)
+            response = self.post("/templateTester/", json=json_template)
             response.raise_for_status()
             response_json = response.json()
-            return response_json.get("value")
+            return response_json.get(return_type)
         except:
             error_string = (
                 f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
                 f'line: {sys.exc_info()[2].tb_lineno}. Template: '
                 f'{template}')
+            self.logger.error(error_string)
+            raise
+
+    def resolve_properties(self, template_properties: dict):
+        """
+        Leverage the OneFuse template tester to render an entire template
+        properties stack. Returns rendered properties. Will find and expand any
+        properties prepended with 1FPS_
+
+        Parameters
+        ----------
+        template_properties : dict
+            Stack of properties used in OneFuse policy execution
+            Example:
+            {
+                "owner": "jdoe",
+                "text": "This is {{owner}}'s machine",
+                "1FPS_env": "dev"
+            }
+            Result:
+            {
+                "owner": "jdoe",
+                "text": "This is jdoe's deployment",
+                "nameEnv": "dev",                       # From 1FPS_env
+                "ipamEnv": "Development",               # From 1FPS_env
+                "dnsZone": "dev.cloudbolt.io"           # From 1FPS_env
+            }
+        """
+        try:
+            json_template = {
+                "template": "",
+                "templateProperties": template_properties,
+            }
+            response = self.post("/templateTester/", json=json_template)
+            response.raise_for_status()
+            response_json = response.json()
+            return response_json.get("resolvedProperties")
+        except:
+            error_string = (
+                f'Error: {sys.exc_info()[0]}. {sys.exc_info()[1]}, '
+                f'line: {sys.exc_info()[2].tb_lineno}.')
             self.logger.error(error_string)
             raise
 
