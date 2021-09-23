@@ -501,49 +501,38 @@ class Utilities(object):
                         f'MO does not include deprovisioningDetails '
                         f'to be cleaned.')
         elif run_type == "pluggable_module":
-            # For Pluggable Modules, we are going to recreate the MO itself to
-            # only include relevant data
-            mo = managed_object
-            managed_object = {}
-            try:
-                managed_object["_links"] = mo["_links"]
-            except:
-                raise OneFuseError("Links not included in MO")
-            try:
-                managed_object["archived"] = mo["archived"]
-            except:
-                raise OneFuseError("Archived not included in MO")
-            try:
-                managed_object["endpoint"] = mo["endpoint"]
-            except:
-                raise OneFuseError("Endpoint not included in MO")
-            try:
-                managed_object["id"] = mo["id"]
-            except:
-                raise OneFuseError("ID not included in MO")
-            try:
-                managed_object["name"] = mo["name"]
-            except:
-                raise OneFuseError("Name not included in MO")
-            try:
-                managed_object["trackingId"] = mo["trackingId"]
-            except:
-                raise OneFuseError("Tracking ID not included in MO")
-            try:
-                managed_object["OneFuse_PluggableModuleName"] = mo[
-                    "OneFuse_PluggableModuleName"]
-            except:
-                raise OneFuseError("Module Name not included in MO")
-            try:
-                managed_object["OneFuse_Suffix"] = mo["OneFuse_Suffix"]
-            except:
-                raise OneFuseError("Suffix not included in MO")
-            try:
-                managed_object["OneFuse_CBHookPointString"] = mo[
-                    "OneFuse_CBHookPointString"]
-            except:
-                raise OneFuseError("CB Hook String not included in MO")
-            managed_object["managedObjectTruncated"] = True
+            max_characters = 6000
+            clean_details = len(json.dumps(managed_object)) > max_characters
+            original_mo = dict(managed_object)
+            safe_props = ["_links", "id", "name", "archived", "trackingId",
+                          "OneFuse_PluggableModuleName", "OneFuse_Suffix",
+                          "OneFuse_CBHookPointString", "endpoint",
+                          "managedObjectTruncated"]
+            job_results_keys = ['provisioningJobResults', 'updateJobResults',
+                                'deprovisioningJobResults']
+
+            if clean_details:
+                managed_object["managedObjectTruncated"] = True
+                for key in list(managed_object):
+                    if key not in safe_props:
+                        del managed_object[key]
+
+                for key in job_results_keys:
+                    temp_mo = dict(managed_object)
+                    value_list = original_mo[key]
+                    if value_list and type(value_list) == list:
+                        list_length = len(value_list)
+                        value = value_list[-1]
+                        if type(value) == dict:
+                            last_element = dict(value)
+                        else:
+                            last_element = value
+                        last_element["originalIndexNumber"] = list_length
+                        temp_mo[key] = [last_element]
+                        if len(json.dumps(temp_mo)) < max_characters:
+                            managed_object = dict(temp_mo)
+            else:
+                managed_object["managedObjectTruncated"] = False
         else:
             self.logger.debug(f'Invalid run_type: {run_type}')
         return managed_object
