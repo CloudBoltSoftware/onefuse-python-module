@@ -41,34 +41,24 @@ class CbOneFuseManager(OneFuseManager):
     A boolean parameter called verify_certs with default value of False, is
     provided in the constructor in case the caller wants to enable SSL cert
     validation.
-
-    Installation Instructions:
-    1. Create a Connection Info for onefuse. This must be labelled as 'onefuse'
-    2. Execute the Configuration script.
-        > python /var/opt/cloudbolt/proserv/xui/onefuse/configuration/setup.py
-
-    OneFuse Parameter usage ('name' : 'value_format'):
-        'OneFuse_AnsibleTowerPolicy_<executionstring>_<uniqueName>' : '<onefusehost>:<policyname>:<hosts>:<limit>'
-        'OneFuse_DnsPolicy_Nic<#>' : '<onefusehost>:<policyname>:<dnszones>'
-        'OneFuse_IpamPolicy_Nic<#>' : '<onefusehost>:<policyname>'
-        'OneFuse_ADPolicy' : '<onefusehost>:<policyname>'
-        'OneFuse_NamingPolicy' : '<onefusehost>:<policyname>'
-        Property Toolkit properties:
-            'OneFuse_PropertyToolkit' : '<onefusehost>:true'
-            'OneFuse_SPS_<uniqueName>' : '<staticpropertysetname>'
-            'OneFuse_CreateProperties_<uniqueName>' : '{"key":"<key>","value":"<value>"}'
-        'OneFuse_ScriptingPolicy_<executionstring>_<uniqueName>' : '<onefusehost>:<policyname>'
-
-        Valid Execution Strings for Ansible Tower and Scripting:
-            HostnameOverwrite
-            PreCreateResource
-            PreApplication (only valid when configuration manager used)
-            PostProvision
-
     """
 
     def __init__(self, conn_info_name: str, verify_certs: bool = None,
                  **kwargs):
+        """
+        Instantiate the CbOneFuseManager from a CloudBolt server.
+
+        Parameters
+        ----------
+        conn_info_name : str
+            Name of the ConnectionInfo in CloudBolt where the OneFuse
+            credentials are stored. This ConnectionInfo must have the CB label
+            of 'onefuse'
+        verify_certs : bool
+            OneFuse password
+        host : str
+            OneFuse host FQDN. Ex: 'onefuse.cloudbolt.io'
+        """
         try:
             conn_info = ConnectionInfo.objects.get(
                 name__iexact=conn_info_name,
@@ -108,8 +98,22 @@ class CbOneFuseManager(OneFuseManager):
             logger=logger
         )
 
-    def render_and_apply_properties(self, properties, resource,
-                                    properties_stack):
+    def render_and_apply_properties(self, properties: dict, resource,
+                                    properties_stack: dict):
+        """
+        Used for the OneFuse Property Toolkit Functions in CloudBolt. This
+        method will render all properties passed in and apply them to the
+        CloudBolt resource using the properties_stack for template renders
+
+        Parameters
+        -----------
+        properties: dict
+            The new properties
+        resource : infrastructure.models.Server or resources.models.Resource
+            The resource (Resource or Server) to apply the properties back to
+        properties_stack : dict
+            A dict containing all properties from the CB resource
+        """
         utilities = Utilities(self.logger)
         for key in properties.keys():
             rendered_key = self.render(key, properties_stack)
@@ -180,6 +184,12 @@ class CbOneFuseManager(OneFuseManager):
 
 
 class Utilities(object):
+    """
+    A class of utilities when working with OneFuse in CloudBolt. These do not
+    rely on OneFuse to function so they are separated in to a separate class
+    from the CbOneFuseManager
+    """
+
     def __init__(self, logger=None):
         if logger:
             self.logger = logger
@@ -193,7 +203,22 @@ class Utilities(object):
     def __repr__(self):
         return 'Utilities'
 
-    def get_connection_and_policy_values(self, prefix, properties_stack):
+    def get_connection_and_policy_values(self, prefix: str,
+                                         properties_stack: dict):
+        """
+        Get the Connection and Policy Values for a given OneFuse prefix from
+        a CB Resource Properties Stack. Parses the properties to find OneFuse
+        Properties.
+
+        Parameters
+        ----------
+        prefix: str
+            The prefix of the properties you are looking for.
+            Ex: 'OneFuse_IpamPolicy_' Would return all of the properties from
+            the stack prefixed with 'OneFuse_IpamPolicy_'
+        properties_stack:
+            A dict containing all properties from the CB resource
+        """
         conn_and_policy_values = []
         pattern = re.compile(prefix)
         for key in properties_stack.keys():
@@ -227,8 +252,19 @@ class Utilities(object):
                 conn_and_policy_values.append(conn_policy_value)
         return conn_and_policy_values
 
-    def check_or_create_cf(self, cf_name, cf_type="STR"):
-        # Check the existence of a custom field in CB. Create if it doesn't exist
+    def check_or_create_cf(self, cf_name: str, cf_type: str = "STR"):
+        """
+        Check the existence of a custom field in CB. Create if it doesn't exist
+
+        Parameters
+        ----------
+        cf_name: str
+            Name of the Custom Field to create
+        cf_type: str - optional
+            Type of Custom Field to create. Default: ?STR. Valid options:
+            STR, INT", IP, DT, TXT, ETXT, CODE, BOOL, DEC, NET, PWD, TUP, LDAP,
+            URL, NSXS, NSXE, STOR, FILE
+        """
         try:
             CustomField.objects.get(name=cf_name)
         except:
@@ -243,8 +279,17 @@ class Utilities(object):
             cf.save()
             self.logger.debug(f'Created parameter: {cf_name}')
 
-    def get_cb_object_properties(self, resource, hook_point=None):
-        # Generate a properties payload to be sent to OneFuse
+    def get_cb_object_properties(self, resource, hook_point: str = None):
+        """
+        Generate a properties payload to be sent to OneFuse
+
+        Parameters
+        ----------
+        resource: infrastructure.models.Server or resources.models.Resource
+            The resource (Resource or Server) to gather parameters from
+        hook_point: str - optional
+            The CloudBolt HookPoint where job is executing
+        """
         resource_values = vars(resource)
         properties_stack = {}
 
@@ -324,7 +369,7 @@ class Utilities(object):
         if hook_point is not None:
             properties_stack["hook_point"] = hook_point
 
-        """ Commenting out until able to validate PTK
+        """ Commenting out until able to validate 1.4 PTK updates
         for key in properties_stack.keys():
             if key.find("OneFuse_SPS_") == 0:
                 # Replace properties with OneFuse_SPS_ with 1FPS_
@@ -338,7 +383,15 @@ class Utilities(object):
             pass
         return properties_stack
 
-    def get_network_info(self, resource):
+    def get_network_info(self, resource: Server):
+        """
+        Get the network info for a CloudBolt Server
+
+        Parameters
+        ----------
+        resource: infrastructure.models.Server
+            CloudBolt Server object
+        """
         nics = resource.nics.all()
         network_info = {}
         for nic in nics:
@@ -376,7 +429,7 @@ class Utilities(object):
                 network_info[index_prop]["fqdn"] = (f'{resource.hostname}.'
                                                     f'{resource.dns_domain}')
                 network_info[index_prop]["target"] = network_info[
-                                                            index_prop]["fqdn"]
+                    index_prop]["fqdn"]
             except Exception:
                 pass
             try:
@@ -400,7 +453,15 @@ class Utilities(object):
         self.logger.debug(f'Returning network_info: {network_info}')
         return network_info
 
-    def get_hardware_info(self, resource):
+    def get_hardware_info(self, resource: Server):
+        """
+        Get the Hardware info for a CloudBolt Server
+
+        Parameters
+        ----------
+        resource: infrastructure.models.Server
+            CloudBolt Server object
+        """
         hardware_info = {}
         index_prop = f'OneFuse_VmHardware'
         hardware_info[index_prop] = {}
@@ -438,12 +499,31 @@ class Utilities(object):
         return hardware_info
 
     def convert_object_to_string(self, value):
+        """
+        Take a value and if it is a Python dict or list convert to a JSON
+        string
+
+        Parameters
+        ----------
+        value: any
+            Value to be evaluated for conversion to string
+        """
         if type(value) == 'list' or type(value) == 'dict':
             self.logger.debug('Object converted to string')
             return json.dumps(value)
         return value
 
-    def get_matching_property_names(self, prefix, properties_stack):
+    def get_matching_property_names(self, prefix: str, properties_stack: dict):
+        """
+        From a dict, find all keys that match the input prefix
+
+        Parameters
+        ----------
+        prefix: str
+            Prefix to search for. Ex: OneFuse_NamingPolicy_
+        properties_stack: dict
+            A dict containing all properties from the CB resource
+        """
         matching_property_names = []
         pattern = re.compile(prefix)
         for key in properties_stack.keys():
@@ -455,6 +535,16 @@ class Utilities(object):
         return matching_property_names
 
     def get_matching_properties(self, prefix, properties_stack):
+        """
+        From a dict, return a list of values that match the input prefix
+
+        Parameters
+        ----------
+        prefix: str
+            Prefix to search for. Ex: OneFuse_NamingPolicy_
+        properties_stack: dict
+            A dict containing all properties from the CB resource
+        """
         matching_properties = []
         pattern = re.compile(prefix)
         for key in properties_stack.keys():
@@ -466,8 +556,16 @@ class Utilities(object):
         return matching_properties
 
     def delete_output_job_results(self, managed_object, run_type):
-        # Scripting and Ansible Tower can have massive response payloads, this
-        # Function cleans the output to keep the MO a manageable size
+        """
+        Scripting and Ansible Tower can have massive response payloads, this
+        Function cleans the output to keep the MO a manageable size
+
+        Parameters
+        ----------
+        managed_object: dict
+        run_type: str
+            ansible_tower, scripting, or pluggable_module
+        """
         if run_type == 'ansible_tower':
             self.logger.debug(
                 f'prov len: {len(managed_object["provisioningJobResults"])}')
@@ -490,8 +588,9 @@ class Utilities(object):
                     self.logger.debug(
                         f'Scripting Output deleted for provisioning.')
                 except:
-                    self.logger.debug(f'MO does not include provisioningDetails '
-                                      f'to be cleaned.')
+                    self.logger.debug(
+                        f'MO does not include provisioningDetails '
+                        f'to be cleaned.')
                 try:
                     managed_object["deprovisioningDetails"]["output"] = []
                     self.logger.debug(
