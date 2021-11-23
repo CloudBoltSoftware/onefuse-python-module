@@ -86,7 +86,11 @@ class CbOneFuseManager(OneFuseManager):
         password = conn_info.password
         host = conn_info.ip
         protocol = conn_info.protocol
+        if not protocol:
+            protocol = 'https'
         port = conn_info.port
+        if not port:
+            port = '443'
         super().__init__(
             username,
             password,
