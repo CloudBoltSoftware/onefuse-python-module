@@ -430,18 +430,21 @@ class Utilities(object):
             except Exception:
                 pass
             try:
-                network_info[index_prop]["fqdn"] = (f'{resource.hostname}.'
-                                                    f'{resource.dns_domain}')
+                # Check if dns_domain set on resource first, then check network
+                if resource.dns_domain:
+                    dns_domain = f'.{resource.dns_domain}'
+                    network_info[index_prop]["dnsSuffix"] = dns_domain
+                elif nic.network.dns_domain:
+                    dns_domain = f'.{nic.network.dns_domain}'
+                    network_info[index_prop]["dnsSuffix"] = dns_domain
+                network_info[index_prop]["fqdn"] = (f'{resource.hostname}'
+                                                    f'{dns_domain}')
                 network_info[index_prop]["target"] = network_info[
                     index_prop]["fqdn"]
             except Exception:
                 pass
             try:
                 network_info[index_prop]["gateway"] = nic.network.gateway
-            except Exception:
-                pass
-            try:
-                network_info[index_prop]["dnsSuffix"] = resource.dns_domain
             except Exception:
                 pass
             try:
