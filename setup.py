@@ -13,7 +13,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/x-rst",
     packages=['onefuse'],
-    install_requires=['requests', 'urllib3'],
+    install_requires=['requests', 'urllib3', 'packaging'],
     license='Mozilla Public License 2.0 (MPL 2.0)',
 
     classifiers=[

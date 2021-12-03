@@ -8,9 +8,7 @@ from .exceptions import (BackupsUnknownError, RestoreContentError,
                          OneFuseError, PolicyTypeNotFound)
 from .admin import OneFuseManager
 from requests.exceptions import HTTPError
-from decimal import Decimal
-
-# TODO : Add 1.4 support
+from packaging import version
 
 
 # If system run on is Windows, swap '/' with '\\' for file paths
@@ -74,7 +72,7 @@ class BackupManager(object):
             "servicenowCMDBPolicies", "vraPolicies"
         ]
 
-        if Decimal(self.ofm.onefuse_version) >= Decimal('1.4'):
+        if version.parse(self.ofm.onefuse_version) > version.parse('1.4'):
             self.policy_types.insert(0, 'modules')
             self.policy_types.insert(1, 'connectionInfo')
             self.policy_types.append('modulePolicies')
@@ -319,17 +317,17 @@ class BackupManager(object):
                         or key.find('version') != -1):
                     # If policy_type is endpoints, need to remove version info
                     # when restoring from older versions to 1.4+
-                    if Decimal(version) < Decimal('1.4'):
+                    if version.parse(self.ofm.onefuse_version) < version.parse('1.4'):
                         restore_json[key] = json_content[key]
                 elif policy_type == "propertySets" and key == "type":
                     # OneFuse 1.4+ no longer has the type key on a Property set
-                    if Decimal(version) < Decimal('1.4'):
+                    if version.parse(self.ofm.onefuse_version) < version.parse('1.4'):
                         restore_json[key] = json_content[key]
                 else:
                     restore_json[key] = json_content[key]
 
-        if policy_type == 'ipamPolicies' and Decimal(version) >= Decimal(
-                '1.4'):
+        if policy_type == 'ipamPolicies' and \
+            version.parse(self.ofm.onefuse_version) >= version.parse('1.4'):
             # If restoring from < 1.3 to 1.4, need to add skip IP defaults
             if "updateConflictNameWithDns" not in restore_json:
                 restore_json["updateConflictNameWithDns"] = False
