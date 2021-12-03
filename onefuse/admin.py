@@ -18,44 +18,13 @@ sys.path.append(ROOT_PATH)
 PROPERTY_SET_PREFIX = 'OneFuse_SPS_'
 
 
-# TODO: Add 1.4 Support
-
 # noinspection DuplicatedCode,PyBroadException,PyShadowingNames
 class OneFuseManager(object):
     """
     This is a context manager class available to Python that facilitates
     easy API connectivity from a Python script host to a OneFuse host.
 
-    Accepted optional kwargs
-    ------------------------
-    source : str
-        default 'PYTHON' - allows to specify source so that this class
-        can be called by other modules (CloudBolt, etc.). All OneFuse jobs will
-        show this value as the Source of the job
-    protocol : str
-        default 'https' - Allows to specify non-standard protocol
-    port : int
-        default 443 - Allows to specify non-standard port
-    verify_certs : bool
-        default False - Allows to specify whether or not to verify
-        OneFuse certs
-    log_level : str
-        default 'WARNING' - Allows more verbose logs to be shown. Valid options
-        are: CRITICAL, ERROR, WARNING, INFO, DEBUG
-    logger - allows you to pass in logger information. By default will log to
-        onefuse.log as well as to console at the DEBUG level
-
-    Parameters
-    ----------
-    username : str
-        OneFuse username
-    password : str
-        OneFuse password
-    host : str
-        OneFuse host FQDN. Ex: 'onefuse.cloudbolt.io'
-
     Example 1 - Make custom REST calls to OneFuse:
-
         from onefuse.admin import OneFuseManager
         ofm = OneFuseManager(username, password, host)
         response = ofm.get("/namingPolicies/")
@@ -66,19 +35,41 @@ class OneFuseManager(object):
         naming_json = ofm.provision_naming(self, policy_name,
                                            template_properties, tracking_id)
 
-    Accepted optional kwargs:
-
-
     Authentication, headers, and url creation is handled within this class,
     freeing the caller from having to deal with these tasks.
-
     """
 
     def __init__(self, username: str, password: str, host: str, **kwargs):
         """
         Instantiate the OneFuseManager
 
+        Parameters
+        ----------
+        username : str
+            OneFuse username
+        password : str
+            OneFuse password
+        host : str
+            OneFuse host FQDN. Ex: 'onefuse.cloudbolt.io'
 
+        Accepted optional kwargs
+        ------------------------
+        source : str
+            default 'PYTHON' - allows to specify source so that this class
+            can be called by other modules (CloudBolt, etc.). All OneFuse jobs will
+            show this value as the Source of the job
+        protocol : str
+            default 'https' - Allows to specify non-standard protocol
+        port : int
+            default 443 - Allows to specify non-standard port
+        verify_certs : bool
+            default False - Allows to specify whether or not to verify
+            OneFuse certs
+        log_level : str
+            default 'WARNING' - Allows more verbose logs to be shown. Valid options
+            are: CRITICAL, ERROR, WARNING, INFO, DEBUG
+        logger - allows you to pass in logger information. By default will log to
+            onefuse.log as well as to console at the DEBUG level
         """
         try:
             source = kwargs["source"]
