@@ -272,10 +272,21 @@ class Utilities(object):
         try:
             CustomField.objects.get(name=cf_name)
         except:
+            label = cf_name
+            if len(label) > 50:
+                label = label[0:50]
+                self.logger.warning(f'The label for field {cf_name} had to be '
+                                    f'truncated to 50 Characters. New label: '
+                                    f'{label}')
+            if len(cf_name) > 255:
+                raise OneFuseError(f'CloudBolt is limited to 255 characters '
+                                   f'for the name of a parameter. The field: '
+                                   f'{cf_name} exceeds this length and must be'
+                                   f' shortened before it will work')
             self.logger.debug(f'Creating parameter: {cf_name}')
             cf = CustomField(
                 name=cf_name,
-                label=cf_name,
+                label=label,
                 type=cf_type,
                 show_on_servers=True,
                 description="Created by the OneFuse plugin for CloudBolt"
