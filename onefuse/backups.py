@@ -72,7 +72,7 @@ class BackupManager(object):
             "servicenowCMDBPolicies", "vraPolicies"
         ]
 
-        if version.parse(self.ofm.onefuse_version) > version.parse('1.4'):
+        if version.parse(self.ofm.onefuse_version) >= version.parse('1.4'):
             self.policy_types.insert(0, 'modules')
             self.policy_types.insert(1, 'connectionInfo')
             self.policy_types.append('modulePolicies')
