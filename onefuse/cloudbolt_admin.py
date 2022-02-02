@@ -396,6 +396,15 @@ class Utilities(object):
             properties_stack["annotation"] = ""
         except KeyError:
             pass
+
+        # Add tech specific stack
+        try:
+            tech_details = vars(resource.tech_specific_details())
+            for key in tech_details.keys():
+                properties_stack[key] = str(tech_details[key])
+        except:
+            pass
+
         return properties_stack
 
     def get_network_info(self, resource: Server):
