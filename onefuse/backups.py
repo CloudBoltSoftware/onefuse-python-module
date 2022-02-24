@@ -276,7 +276,6 @@ class BackupManager(object):
             Dict of JSON of a policy that you are looking to restore
         """
         restore_json = {}
-        version = self.ofm.get_onefuse_version()
         for key in json_content:
             if key == "_links":
                 for key2 in json_content["_links"]:

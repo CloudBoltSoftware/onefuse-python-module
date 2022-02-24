@@ -5,7 +5,7 @@ with open("README.rst", "r") as fh:
 
 setup(
     name='onefuse',
-    version='9.4.7',
+    version='9.4.7.2',
     author='Cloudbolt Software, Inc.',
     author_email='support@cloudbolt.io',
     description='OneFuse upstream provider package for Python',
