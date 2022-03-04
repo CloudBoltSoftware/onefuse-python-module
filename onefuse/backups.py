@@ -137,7 +137,10 @@ class BackupManager(object):
                                   f'{policy["name"]}')
             file_path = f'{backups_path}{policy_type}{path_char}'
             if policy_type == 'modules':
-                self.ofm.export_pluggable_module(policy["name"], file_path)
+                # Modules will overwrite existing modules in the file path if
+                # found
+                self.ofm.export_pluggable_module(policy["name"], file_path,
+                                                 True)
                 continue
             if policy_type == "endpoints":
                 if "credential" in policy["_links"]:

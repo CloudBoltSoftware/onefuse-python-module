@@ -437,7 +437,8 @@ class OneFuseManager(object):
         return path
 
     # Pluggable Modules
-    def export_pluggable_module(self, module_name: str, save_path: str):
+    def export_pluggable_module(self, module_name: str, save_path: str,
+                                overwrite: bool = False):
         """
         Export a Pluggable Module to a file path. The exported module will be
         saved to a file
@@ -450,6 +451,9 @@ class OneFuseManager(object):
             File path to save the exported module zip file to
             Windows: 'C:\\temp\\onefuse_backups\\'
             Linux: '/tmp/onefuse_backups/'
+        overwrite : bool
+            Boolean value whether to overwrite an existing file in save_path
+            Defaults to False
         """
         path = 'modules'
         module = self.get_policy_by_name(path, module_name)
@@ -465,7 +469,10 @@ class OneFuseManager(object):
                     raise
         file_path = f'{save_path}{module_name}.zip'
         if os.path.isfile(file_path):
-            raise OneFuseError(f'Zip file already exists for module_name: '
+            if overwrite:
+                os.remove(file_path)
+            else:
+                raise OneFuseError(f'Zip file already exists for module_name: '
                                f'{module_name} in save_path: {save_path}')
         with open(file_path, 'wb') as fd:
             for chunk in response.iter_content(chunk_size=128):
