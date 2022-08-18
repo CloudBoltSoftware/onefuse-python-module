@@ -473,7 +473,7 @@ class OneFuseManager(object):
                 os.remove(file_path)
             else:
                 raise OneFuseError(f'Zip file already exists for module_name: '
-                               f'{module_name} in save_path: {save_path}')
+                                   f'{module_name} in save_path: {save_path}')
         with open(file_path, 'wb') as fd:
             for chunk in response.iter_content(chunk_size=128):
                 fd.write(chunk)
@@ -1338,6 +1338,359 @@ class OneFuseManager(object):
             self.logger.info(f'Unable to return Instance ID, version is < '
                              f'1.4')
             return None
+
+    def ingest_name(self, policy_name: str, name: str,
+                    dns_suffix: str = "", template_properties: dict = None,
+                    tracking_id: str = ""):
+        """
+        Ingest an existing name to OneFuse - the policy will not execute but
+        an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Custom Naming Policy Name
+        name : str
+            Name for the Name object, typically a hostname
+        dns_suffix : str
+            Value for the DNS Suffix. Ex: 'example.com'
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'namingPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Name
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "name": name,
+            "dnsSuffix": dns_suffix,
+            "templateProperties": template_properties
+        }
+        path = "/customNames/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_dns_reservation(self, policy_name: str, name: str,
+                               records: list[dict],
+                               template_properties: dict = None,
+                               tracking_id: str = ""):
+        """
+        Ingest an existing DNS Reservation to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse DNS Policy Name
+        name : str
+            Name for the Name object, typically a hostname
+        records : list(dict
+            List of records to be included in DNS reservation.
+            Ex: [{"type": "a", "value": "10.1.0.60", "name": "test.example.com"}]
+            Valid types: a, ptr, host (infoblox only)
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'dnsPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Validate records
+        for record in records:
+            if record["type"] not in ["a", "ptr", "host"]:
+                raise ValueError(f"Invalid DNS record type: {record['type']}")
+        # Ingest DNS Reservation
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "name": name,
+            "records": records,
+            "templateProperties": template_properties
+        }
+        path = "/dnsReservations/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_ip_address(self, policy_name: str, ip_address: str,
+                          hostname: str, subnet: str, primary_dns: str = None,
+                          secondary_dns: str = None, dns_suffix: str = None,
+                          dns_search_suffixes: str = None, gateway: str = None,
+                          netmask: str = None, network: str = None,
+                          template_properties: dict = None,
+                          nic_label: str = None, tracking_id: str = ""):
+        """
+        Ingest an existing IP Address to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse IPAM Policy Name
+        ip_address : str
+            IP Address for the IP Address object. Ex: '10.1.0.25
+        hostname : str
+            Hostname for the IP Address object. Ex. 'myhost.example.com'
+        subnet : str
+            Value for the Subnet in CIDR notation. Ex: '10.1.0.0/24'
+        primary_dns : str
+            Optional Primary DNS for the IP Address object. Ex: '10.0.0.10
+        secondary_dns : str
+            Optional Secondary DNS for the IP Address object. Ex: '10.0.0.10
+        dns_suffix : str
+            Optional Value for the DNS Suffix. Ex: 'example.com'
+        dns_search_suffixes : str
+            Optional Value for the DNS Search Suffixes. Comma separated.
+            Ex: 'example.com,example2.com'
+        gateway : str
+            Optional Value for the Gateway. Ex: '10.1.0.1'
+        netmask : str
+            Optional Value for the Netmask. Ex: '255.255.255.0'
+        network : str
+            Optional Value for the Network. Ex: 'NameOfPortGroupInVcenter'
+        nic_label : str
+            Optional - Value for the NIC Label. Ex: 'eth0'
+        template_properties : dict
+            Optional - Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'ipamPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest IP Address
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "ipAddress": ip_address,
+            "hostname": hostname,
+            "primaryDns": primary_dns,
+            "secondaryDns": secondary_dns,
+            "dnsSuffix": dns_suffix,
+            "dnsSearchSuffixes": dns_search_suffixes,
+            "nicLabel": nic_label,
+            "gateway": gateway,
+            "netmask": netmask,
+            "network": network,
+            "subnet": subnet,
+            "templateProperties": template_properties
+        }
+        path = "/ipamReservations/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_scripting_deployment(self, policy_name: str,
+                                    provisioning_details: dict,
+                                    deprovisioning_details: dict,
+                                    template_properties: dict = None,
+                                    tracking_id: str = ""):
+        """
+        Ingest an existing Scripting Deployment to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Scripting Policy Name
+        provisioning_details : dict
+           Scripting provisioning details.
+           Ex. {"status": "successful", "output": []}
+        deprovisioning_details : dict
+            Scripting deprovisioning details
+        template_properties : dict
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'scriptingPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Scripting Deployment
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "provisioning_details": provisioning_details,
+            "deprovisioning_details": deprovisioning_details,
+            "templateProperties": template_properties
+        }
+        path = "/scriptingDeployments/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_ad(self, policy_name: str, name: str, final_ou: str,
+                  build_ou: str, state: str = "final",
+                  security_groups: list = [], template_properties: dict = None,
+                  tracking_id: str = ""):
+        """
+        Ingest an existing AD object to OneFuse - the policy will not execute
+        but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse AD Policy Name
+        name : str
+            AD Name
+        final_ou : str
+            AD Final OU
+        build_ou : str
+            AD Build OU
+        state : str - optional
+            AD State. Default is 'final'
+        security_groups : list - optional
+            List of security groups to add to the AD.
+        template_properties : dict - optional
+            Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'microsoftADPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest AD
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "name": name,
+            "finalOu": final_ou,
+            "buildOu": build_ou,
+            "state": state,
+            "securityGroups": security_groups,
+            "templateProperties": template_properties
+        }
+        path = "/microsoftADComputerAccounts/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_ansible_tower(self, policy_name: str, hosts: list, limit: str,
+                             inventory_name: str,
+                             template_properties: dict = None,
+                             tracking_id: str = ""):
+        """
+        Ingest an existing Ansible Tower object to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Ansible Tower Policy Name
+        hosts : list
+            List of Ansible Tower hosts
+        limit : str
+            Ansible Tower limit
+        inventory_name : str
+            Ansible Tower inventory name
+        template_properties : dict - optional
+            Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'ansibleTowerPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Ansible Tower
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "hosts": hosts,
+            "limit": limit,
+            "inventoryName": inventory_name,
+            "templateProperties": template_properties
+        }
+        path = "/ansibleTowerDeployments/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_service_now_cmdb(self, policy_name: str,
+                                configuration_items_info: list,
+                                execution_details: dict,
+                                template_properties: dict = None,
+                                tracking_id: str = ""):
+        """
+        Ingest an existing Service Now CMDB object to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Service Now CMDB Policy Name
+        configuration_items_info : list
+            List representing the configuration items to ingest.
+            Ex: [{"ciClassName": "cmdb_ci_vmware_instance", "ciName": "ppportlapp019" }]
+        execution_details : dict
+            Dictionary of execution details.
+        template_properties : dict - optional
+            Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'servicenowCMDBPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Service Now CMDB
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "configurationItemsInfo": configuration_items_info,
+            "executionDetails": execution_details,
+            "templateProperties": template_properties
+        }
+        path = "/servicenowCMDBDeployments/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def delete_ingested_object(self, id: str, ingest_type: str):
+        """
+        Delete an ingested object from OneFuse - The deleted object will be
+        removed from the OneFuse database without deprovisioning.
+
+        Parameters
+        ----------
+        id : str
+            ID for the object
+        ingest_type : str
+            Type of object to delete. Valid values: 'microsoftADComputerAccounts',
+            'scriptingDeployments', 'ansibleTowerDeployments', 'customNames',
+            'ansibleTowerPolicy', 'dnsReservations', 'ipamReservations',
+            'servicenowCMDBDeployments', 'servicenowConnectorDeployments'
+        """
+        path = f"/{ingest_type}/{id}/ingest/"
+        response_json = self.deprovision_mo(path)
+        return response_json
 
 
 if __name__ == '__main__':
