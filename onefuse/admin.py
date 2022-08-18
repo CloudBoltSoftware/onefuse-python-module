@@ -1377,20 +1377,6 @@ class OneFuseManager(object):
         response_json = self.request(path, template, tracking_id)
         return response_json
 
-    def delete_ingested_name(self, id: str):
-        """
-        Delete an ingested name from OneFuse - The deleted object will be
-        removed from the OneFuse database without deprovisioning.
-
-        Parameters
-        ----------
-        id : str
-            ID for the Name object
-        """
-        path = f"/customNames/{id}/ingest/"
-        response_json = self.deprovision_mo(path)
-        return response_json
-
     def ingest_dns_reservation(self, policy_name: str, name: str,
                                records: list[dict],
                                template_properties: dict = None,
@@ -1434,20 +1420,6 @@ class OneFuseManager(object):
         }
         path = "/dnsReservations/ingest/"
         response_json = self.request(path, template, tracking_id)
-        return response_json
-
-    def delete_ingested_dns_reservation(self, id: str):
-        """
-        Delete an ingested DNS Reservation from OneFuse - The deleted object
-        will be removed from the OneFuse database without deprovisioning.
-
-        Parameters
-        ----------
-        id : str
-            ID for the Name object
-        """
-        path = f"/dnsReservations/{id}/ingest/"
-        response_json = self.deprovision_mo(path)
         return response_json
 
     def ingest_ip_address(self, policy_name: str, ip_address: str,
@@ -1522,20 +1494,6 @@ class OneFuseManager(object):
         response_json = self.request(path, template, tracking_id)
         return response_json
 
-    def delete_ingested_ip_address(self, id: str):
-        """
-        Delete an ingested IP Address from OneFuse - The deleted object will be
-        removed from the OneFuse database without deprovisioning.
-
-        Parameters
-        ----------
-        id : str
-            ID for the IP Address object
-        """
-        path = f"/ipamReservations/{id}/ingest/"
-        response_json = self.deprovision_mo(path)
-        return response_json
-
     def ingest_scripting_deployment(self, policy_name: str,
                                     provisioning_details: dict,
                                     deprovisioning_details: dict,
@@ -1576,21 +1534,6 @@ class OneFuseManager(object):
         }
         path = "/scriptingDeployments/ingest/"
         response_json = self.request(path, template, tracking_id)
-        return response_json
-
-    def delete_ingested_scripting_deployment(self, id: str):
-        """
-        Delete an ingested Scripting Deployment from OneFuse - The deleted
-        object will be removed from the OneFuse database without
-        deprovisioning.
-
-        Parameters
-        ----------
-        id : str
-            ID for the Scripting Deployment object
-        """
-        path = f"/scriptingDeployments/{id}/ingest/"
-        response_json = self.deprovision_mo(path)
         return response_json
 
     def ingest_ad(self, policy_name: str, name: str, final_ou: str,
@@ -1643,17 +1586,109 @@ class OneFuseManager(object):
         response_json = self.request(path, template, tracking_id)
         return response_json
 
-    def delete_ingested_ad(self, id: str):
+    def ingest_ansible_tower(self, policy_name: str, hosts: list, limit: str,
+                             inventory_name: str,
+                             template_properties: dict = None,
+                             tracking_id: str = ""):
         """
-        Delete an ingested AD object from OneFuse - The deleted object will be
+        Ingest an existing Ansible Tower object to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Ansible Tower Policy Name
+        hosts : list
+            List of Ansible Tower hosts
+        limit : str
+            Ansible Tower limit
+        inventory_name : str
+            Ansible Tower inventory name
+        template_properties : dict - optional
+            Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'ansibleTowerPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Ansible Tower
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "hosts": hosts,
+            "limit": limit,
+            "inventoryName": inventory_name,
+            "templateProperties": template_properties
+        }
+        path = "/ansibleTowerDeployments/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def ingest_service_now_cmdb(self, policy_name: str,
+                                configuration_items_info: list,
+                                execution_details: dict,
+                                template_properties: dict = None,
+                                tracking_id: str = ""):
+        """
+        Ingest an existing Service Now CMDB object to OneFuse - the policy will not
+        execute but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Service Now CMDB Policy Name
+        configuration_items_info : list
+            List representing the configuration items to ingest.
+            Ex: [{"ciClassName": "cmdb_ci_vmware_instance", "ciName": "ppportlapp019" }]
+        execution_details : dict
+            Dictionary of execution details.
+        template_properties : dict - optional
+            Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'servicenowCMDBPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Service Now CMDB
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "configurationItemsInfo": configuration_items_info,
+            "executionDetails": execution_details,
+            "templateProperties": template_properties
+        }
+        path = "/servicenowCMDBDeployments/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def delete_ingested_object(self, id: str, ingest_type: str):
+        """
+        Delete an ingested object from OneFuse - The deleted object will be
         removed from the OneFuse database without deprovisioning.
 
         Parameters
         ----------
         id : str
-            ID for the AD object
+            ID for the object
+        ingest_type : str
+            Type of object to delete. Valid values: 'microsoftADComputerAccounts',
+            'scriptingDeployments', 'ansibleTowerDeployments', 'customNames',
+            'ansibleTowerPolicy', 'dnsReservations', 'ipamReservations',
+            'servicenowCMDBDeployments', 'servicenowConnectorDeployments'
         """
-        path = f"/microsoftADComputerAccounts/{id}/ingest/"
+        path = f"/{ingest_type}/{id}/ingest/"
         response_json = self.deprovision_mo(path)
         return response_json
 
