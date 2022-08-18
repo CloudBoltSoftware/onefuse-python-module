@@ -473,7 +473,7 @@ class OneFuseManager(object):
                 os.remove(file_path)
             else:
                 raise OneFuseError(f'Zip file already exists for module_name: '
-                               f'{module_name} in save_path: {save_path}')
+                                   f'{module_name} in save_path: {save_path}')
         with open(file_path, 'wb') as fd:
             for chunk in response.iter_content(chunk_size=128):
                 fd.write(chunk)
@@ -1339,6 +1339,56 @@ class OneFuseManager(object):
                              f'1.4')
             return None
 
+    def ingest_name(self, policy_name: str, name: str,
+                    dns_suffix: str = "", tracking_id: str = ""):
+        """
+        Ingest an existing name to OneFuse - the policy will not execute but
+        an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse Custom Naming Policy Name
+        name : str
+            Name for the Name object, typically a hostname
+        dns_suffix : str
+            Value for the DNS Suffix. Ex: 'example.com'
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'namingPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest Name
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "name": name,
+            "dnsSuffix": dns_suffix
+        }
+        path = "/customNames/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def delete_ingested_name(self, id: str):
+        """
+        Delete an ingested name from OneFuse - The deleted object will be
+        removed from the OneFuse database without deprovisioning.
+
+        Parameters
+        ----------
+        id : str
+            ID for the Name object
+        """
+        path = f"/customNames/{id}/ingest/"
+        response_json = self.deprovision_mo(path)
+        return response_json
+    
 
 if __name__ == '__main__':
     username = sys.argv[1]  # 'OneFuse Username'
