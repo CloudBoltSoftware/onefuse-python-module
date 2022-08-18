@@ -1593,6 +1593,70 @@ class OneFuseManager(object):
         response_json = self.deprovision_mo(path)
         return response_json
 
+    def ingest_ad(self, policy_name: str, name: str, final_ou: str,
+                  build_ou: str, state: str = "final",
+                  security_groups: list = [], template_properties: dict = None,
+                  tracking_id: str = ""):
+        """
+        Ingest an existing AD object to OneFuse - the policy will not execute
+        but an object will be added to the OneFuse database.
+
+        Parameters
+        ----------
+        policy_name : str
+            OneFuse AD Policy Name
+        name : str
+            AD Name
+        final_ou : str
+            AD Final OU
+        build_ou : str
+            AD Build OU
+        state : str - optional
+            AD State. Default is 'final'
+        security_groups : list - optional
+            List of security groups to add to the AD.
+        template_properties : dict - optional
+            Dictionary of template properties. Ex: {'key': 'value'}
+        tracking_id : str - optional
+            OneFuse Tracking ID. If not passed, one will be returned from the
+            execution. Tracking IDs allow for grouping all executions for a
+            single object
+        """
+        # Get Naming Policy by Name
+        policy_path = 'microsoftADPolicies'
+        policy_json = self.get_policy_by_name(policy_path, policy_name)
+        links = policy_json["_links"]
+        policy_url = links["self"]["href"]
+        workspace_url = links["workspace"]["href"]
+        # Ingest AD
+        template = {
+            "policy": policy_url,
+            "workspace": workspace_url,
+            "name": name,
+            "finalOu": final_ou,
+            "buildOu": build_ou,
+            "state": state,
+            "securityGroups": security_groups,
+            "templateProperties": template_properties
+        }
+        path = "/microsoftADComputerAccounts/ingest/"
+        response_json = self.request(path, template, tracking_id)
+        return response_json
+
+    def delete_ingested_ad(self, id: str):
+        """
+        Delete an ingested AD object from OneFuse - The deleted object will be
+        removed from the OneFuse database without deprovisioning.
+
+        Parameters
+        ----------
+        id : str
+            ID for the AD object
+        """
+        path = f"/microsoftADComputerAccounts/{id}/ingest/"
+        response_json = self.deprovision_mo(path)
+        return response_json
+
 
 if __name__ == '__main__':
     username = sys.argv[1]  # 'OneFuse Username'
