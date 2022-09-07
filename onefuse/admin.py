@@ -6,6 +6,7 @@ import os
 import requests
 import socket
 import logging
+from typing import List
 from requests.auth import HTTPBasicAuth
 from os import path
 from uuid import uuid1
@@ -1378,7 +1379,7 @@ class OneFuseManager(object):
         return response_json
 
     def ingest_dns_reservation(self, policy_name: str, name: str,
-                               records: list[dict],
+                               records: List[dict],
                                template_properties: dict = None,
                                tracking_id: str = ""):
         """
