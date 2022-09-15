@@ -1,6 +1,8 @@
 import json
 import os
 import sys
+import re
+import fnmatch
 from os import listdir
 from os.path import isfile, join
 import errno
@@ -9,6 +11,7 @@ from .exceptions import (BackupsUnknownError, RestoreContentError,
 from .admin import OneFuseManager
 from requests.exceptions import HTTPError
 from packaging import version
+from typing import Dict, List, Tuple, Union
 
 
 # If system run on is Windows, swap '/' with '\\' for file paths
@@ -71,8 +74,7 @@ class BackupManager(object):
             "microsoftADPolicies", "ansibleTowerPolicies", "scriptingPolicies",
             "servicenowCMDBPolicies", "vraPolicies"
         ]
-
-        if version.parse(self.ofm.onefuse_version) >= version.parse('1.4'):
+        if self.ofm.onefuse_version == "dev" or version.parse(self.ofm.onefuse_version) >= version.parse('1.4'):
             self.policy_types.insert(0, 'modules')
             self.policy_types.insert(1, 'connectionInfo')
             self.policy_types.append('modulePolicies')
@@ -83,25 +85,9 @@ class BackupManager(object):
     def __repr__(self):
         return 'OneFuseBackups'
 
-    # Backups Content
-    def create_json_files(self, response, policy_type: str, backups_path: str):
-        """
-        Creates the json files and stores them in backups_path for the OneFuse
-        policies being backed up. For single policy backups returns None,
 
-        Parameters
-        ----------
-        response : requests.models.Response OR dict
-            The response from a OneFuse call to get OneFuse policies. If a
-            dict is passed in that would be a single OneFuse policy, if it is
-            the Response type that would be the actual Response from a list
-            query against a OneFuse type
-        policy_type : str
-            The type of policy being backed up, used to create sub directories
-            when storing the files
-        backups_path : str
-            The file path where the json files should be stored
-        """
+    # Common code to get policies from the response.
+    def get_policies_from_response(self, response, policy_type: str) -> Tuple[Dict, Dict]:
         if type(response) == dict:
             # if a dict was passed in it was for the single policy backup,
             # Need to structure as a list
@@ -131,7 +117,29 @@ class BackupManager(object):
                     raise OneFuseError(error_string, response=response)
             response_json = response.json()
             policies = response_json["_embedded"][policy_type]
+            return policies, response_json
 
+
+    # Backups Content
+    def create_json_files(self, response, policy_type: str, backups_path: str):
+        """
+        Creates the json files and stores them in backups_path for the OneFuse
+        policies being backed up. For single policy backups returns None,
+
+        Parameters
+        ----------
+        response : requests.models.Response OR dict
+            The response from a OneFuse call to get OneFuse policies. If a
+            dict is passed in that would be a single OneFuse policy, if it is
+            the Response type that would be the actual Response from a list
+            query against a OneFuse type
+        policy_type : str
+            The type of policy being backed up, used to create sub directories
+            when storing the files
+        backups_path : str
+            The file path where the json files should be stored
+        """
+        (policies, response_json) = self.get_policies_from_response(response, policy_type)
         for policy in policies:
             self.ofm.logger.debug(f'Backing up {policy_type} policy: '
                                   f'{policy["name"]}')
@@ -214,6 +222,120 @@ class BackupManager(object):
         else:
             return False
 
+
+    def get_onefuse_names_from_response(self, response, policy_type):
+            (policies, response_json) = self.get_policies_from_response(response, policy_type)
+            policy_list = []
+            for policy in policies:
+                if policy_type == "endpoints":
+                    if "credential" in policy["_links"]:
+                        # OneFuse 1.2 had a bug where the title of a credential
+                        # Started with 'Module Credential id', if that is the
+                        # case we will grab the actual credential title from the
+                        # system
+                        if (policy["_links"]["credential"]["title"].find(
+                                "Module Credential id") == 0):
+                            policy["_links"]["credential"][
+                                "title"] = self.get_credential_name(policy)
+                if "type" in policy:
+                    policy_str = f'{policy_type}:{policy["type"]}:{policy["name"]}'
+                elif "endpointType" in policy:
+                    policy_str = f'{policy_type}:{policy["endpointType"]}:{policy["name"]}'
+                else:
+                    policy_str = f'{policy_type}:{policy["name"]}'
+                policy_list.append(policy_str)
+            have_next = self.key_exists(response_json["_links"], "next")
+            return policy_list, have_next
+
+
+    def list_onefuse_objects(self) -> List[str]:
+        policy_list = []
+        for policy_type in self.policy_types:
+            if policy_type in ["connectionInfo"]:
+                # OneFuse and CMP both use the same model. Only want OneFuse objects.
+                response = self.ofm.get(f'/{policy_type}/?filter=labels.name.iexact:OneFuse')
+            else:
+                response = self.ofm.get(f'/{policy_type}/')
+            (partial, next_exists) = self.get_onefuse_names_from_response(response, policy_type)
+            policy_list.extend(partial)
+            while next_exists:
+                next_page = response.json()["_links"]["next"]["href"]
+                next_page = next_page.split("/?")[1]
+                if policy_type in ["connectionInfo"]:
+                    response = self.ofm.get(f'/{policy_type}/?{next_page}&filter=labels.name.iexact:OneFuse')
+                else:
+                    response = self.ofm.get(f'/{policy_type}/?{next_page}')
+                (partial, next_exists) = self.get_onefuse_names_from_response(response, policy_type)
+                policy_list.extend(partial)
+        return policy_list
+
+
+    def match_object_name(self, name_list: List[str], name: str) -> Tuple[List[str], bool]:
+        globbed = bool(re.search(r"[*?\[\]]", name))
+        if not globbed:
+            return ([name], name in name_list)
+        matches = [n for n in name_list if fnmatch.fnmatchcase(n, name)]
+        return matches, bool(matches)
+
+
+    def filter_export_objects(self, include: Union[str, None], exclude: Union[str, None]) -> List[str]:
+        """
+        Return a filtered list of policies given a comma-separated include list and
+        a comma-separated exclude list.
+
+        Note that the final list of objects is the set of included objects, minus
+        any objects in the exclude set.
+
+        Parameters
+        ----------
+        include: str or None
+            The set of objects to include in the export.  If this parameter is blank, not
+            specified, is "ALL", or is "*", then all objects are included.  Otherwise
+            specify a comma-separated list of colon-separated tuples or triples that can
+            use file-like '*' and '?' wildcard globbing.  Objects like IPAM profiles
+            that have a subtype (e.g. "infoblox", "bluecat") use a triple of the
+            form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
+            items that don't have a subtype use tuples of the form "connectionInfo:dev*".
+        exclude: str or None
+            The set of objects to from from the export.  If this parameter is blank, not
+            specified, or is "NONE", then no objects are excluded.  Otherwise
+            specify a comma-separated list of colon-separated tuples or triples that can
+            use file-like '*' and '?' wildcard globbing.  Objects like IPAM profiles
+            that have a subtype (e.g. "infoblox", "bluecat") use a triple of the
+            form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
+            items that don't have a subtype use tuples of the form "connectionInfo:dev*".
+        """
+        all_objects = self.list_onefuse_objects()
+        include = include.strip() if include else ""
+        missing = []
+        included = []
+        excluded = []
+        if include.lower() in ["", "*", "all"]:
+            included = all_objects.copy()
+        else:
+            globs = [glob.strip() for glob in include.split(",") if glob.strip()]
+            for glob in globs:
+                (incs, found) = self.match_object_name(all_objects, glob)
+                if not found:
+                    missing.append(glob)
+                else:
+                    included.extend(incs)
+        include_set = set(included)
+        exclude = exclude.strip() if exclude else ""
+        if exclude.lower() not in ["", "none"]:
+            globs = [glob.strip() for glob in exclude.split(",") if glob.strip()]
+            for glob in globs:
+                (excs, _) = self.match_object_name(all_objects, glob)
+                excluded.extend(excs)
+                # Omit "missing" non-globbed names if they match an exclude.
+                (miss, _) = self.match_object_name(missing, glob)
+                excluded.extend(miss)
+        exclude_set = set(excluded)
+        result_set = include_set - exclude_set
+        missing_set = set(missing) - exclude_set
+        return sorted(result_set), sorted(missing_set)
+
+
     def backup_policies(self, backups_path: str):
         """
         Back up all OneFuse policies from the OneFuse instance used when
@@ -229,13 +351,19 @@ class BackupManager(object):
         # Gather policies from OneFuse, store them under BACKUPS_PATH
         for policy_type in self.policy_types:
             self.ofm.logger.info(f'Backing up policy_type: {policy_type}')
-            response = self.ofm.get(f'/{policy_type}/')
+            if policy_type in ["connectionInfo"]:
+                response = self.ofm.get(f'/{policy_type}/?filter=labels.name.iexact:OneFuse')
+            else:
+                response = self.ofm.get(f'/{policy_type}/')
             next_exists = self.create_json_files(response, policy_type,
                                                  backups_path)
             while next_exists:
                 next_page = response.json()["_links"]["next"]["href"]
                 next_page = next_page.split("/?")[1]
-                response = self.ofm.get(f'/{policy_type}/?{next_page}')
+                if policy_type in ["connectionInfo"]:
+                    response = self.ofm.get(f'/{policy_type}/?{next_page}&filter=labels.name.iexact:OneFuse')
+                else:
+                    response = self.ofm.get(f'/{policy_type}/?{next_page}')
                 next_exists = self.create_json_files(response, policy_type,
                                                      backups_path)
 
