@@ -13,6 +13,10 @@ class BackupsUnknownError(OneFuseError):
     """Exception raised for Unknown errors with OneFuse Backups and Restores"""
 
 
+class BackupContentError(OneFuseError):
+    """Exception raised when backup content cannot be created"""
+
+
 class RestoreContentError(OneFuseError):
     """Exception raised when restore content cannot be created"""
 

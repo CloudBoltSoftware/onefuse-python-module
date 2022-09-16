@@ -12,6 +12,7 @@ from .admin import OneFuseManager
 from requests.exceptions import HTTPError
 from packaging import version
 from typing import Dict, List, Tuple, Union
+from pathlib import Path
 
 
 # If system run on is Windows, swap '/' with '\\' for file paths
@@ -91,6 +92,7 @@ class BackupManager(object):
         if type(response) == dict:
             # if a dict was passed in it was for the single policy backup,
             # Need to structure as a list
+            response_json = None
             policies = [response]
         else:
             try:
@@ -117,7 +119,7 @@ class BackupManager(object):
                     raise OneFuseError(error_string, response=response)
             response_json = response.json()
             policies = response_json["_embedded"][policy_type]
-            return policies, response_json
+        return policies, response_json
 
 
     # Backups Content
@@ -143,11 +145,11 @@ class BackupManager(object):
         for policy in policies:
             self.ofm.logger.debug(f'Backing up {policy_type} policy: '
                                   f'{policy["name"]}')
-            file_path = f'{backups_path}{policy_type}{path_char}'
+            file_path = str(Path(backups_path) / policy_type)
             if policy_type == 'modules':
                 # Modules will overwrite existing modules in the file path if
                 # found
-                self.ofm.export_pluggable_module(policy["name"], file_path,
+                self.ofm.export_pluggable_module(policy["name"], f"{file_path}/",
                                                  True)
                 continue
             if policy_type == "endpoints":
@@ -160,21 +162,18 @@ class BackupManager(object):
                             "Module Credential id") == 0):
                         policy["_links"]["credential"][
                             "title"] = self.get_credential_name(policy)
-            if not os.path.exists(os.path.dirname(file_path)):
+            if not os.path.exists(file_path):
                 try:
-                    os.makedirs(os.path.dirname(file_path))
+                    os.makedirs(file_path)
                 except OSError as exc:  # Guard against race condition
                     if exc.errno != errno.EEXIST:
                         raise
             if "type" in policy:
-                file_name = f'{backups_path}{policy_type}{path_char}' \
-                            f'{policy["type"]}_{policy["name"]}.json'
+                file_name = Path(file_path) / f'{policy["type"]}_{policy["name"]}.json'
             elif "endpointType" in policy:
-                file_name = f'{backups_path}{policy_type}{path_char}' \
-                            f'{policy["endpointType"]}_{policy["name"]}.json'
+                file_name = Path(file_path) / f'{policy["endpointType"]}_{policy["name"]}.json'
             else:
-                file_name = f'{backups_path}{policy_type}{path_char}' \
-                            f'{policy["name"]}.json'
+                file_name = Path(file_path) / f'{policy["name"]}.json'
             f = open(file_name, 'w+')
             f.write(json.dumps(policy, indent=4))
             f.close()
@@ -270,15 +269,94 @@ class BackupManager(object):
         return policy_list
 
 
-    def match_object_name(self, name_list: List[str], name: str) -> Tuple[List[str], bool]:
-        globbed = bool(re.search(r"[*?\[\]]", name))
-        if not globbed:
-            return ([name], name in name_list)
-        matches = [n for n in name_list if fnmatch.fnmatchcase(n, name)]
-        return matches, bool(matches)
+    def list_exported_objects(self, directory: str) -> List[str]:
+        policy_list = []
+        export_path = Path(directory)
+        if not os.path.isdir(export_path):
+            raise RestoreContentError(f"OneFuse backup directory '{directory}': Not found.")
+        for policy_type in self.policy_types:
+            policy_type_path = Path(export_path) / policy_type
+            if os.path.isdir(policy_type_path):
+                all_filenames = [
+                    f for f in listdir(policy_type_path)
+                    if isfile(policy_type_path / f)
+                    and f.lower().endswith(".json")
+                ]
+                for file_name in all_filenames:
+                    backup_file_path = policy_type_path / file_name
+                    object_data = None
+                    try:
+                        with open(backup_file_path) as fp:
+                            object_data = json.load(fp)
+                    except Exception as exc:  # NOQA
+                        raise RestoreContentError(
+                            f"Cannot read OneFuse backup json file '{str(backup_file_path)}': "
+                            f"{str(exc)}"
+                        )
+                    object_name = object_data.get("name", None)
+                    if not object_name:
+                        raise RestoreContentError(
+                            f"Cannot restore OneFuse backup json file '{str(backup_file_path)}': "
+                            "No 'name' field found in object json."
+                        )
+                    object_subtype = None
+                    if "type" in object_data:
+                        object_subtype = object_data.get("type", None)
+                        if not object_subtype:
+                            raise RestoreContentError(
+                                f"Cannot restore OneFuse backup json file '{str(backup_file_path)}': "
+                                "Field 'type' cannot be blank."
+                            )
+                    elif "endpointType" in object_data:
+                        object_subtype = object_data.get("endpointType", None)
+                        if not object_subtype:
+                            raise RestoreContentError(
+                                f"Cannot restore OneFuse backup json file '{str(backup_file_path)}': "
+                                "Field 'endpointType' cannot be blank."
+                            )
+                    if object_subtype:
+                        object_tuple = f"{policy_type}:{object_subtype}:{object_name}"
+                    else:
+                        object_tuple = f"{policy_type}:{object_name}"
+                    policy_list.append(object_tuple)
+        return policy_list
 
 
-    def filter_export_objects(self, include: Union[str, None], exclude: Union[str, None]) -> List[str]:
+    def match_object_pattern(self, name_list: List[str], pattern: str) -> Tuple[List[str], bool]:
+        """
+        Match a single include/exclude pattern against a list of available object names.
+
+        Parameters
+        ----------
+        name_list: list of str
+            The list of names to pattern match against.
+        pattern: str
+            The pattern to match.  If that pattern starts with "+" it means that the
+            pattern text that follows must match at least one name or the return will
+            indicate no success (Second return tuple element False) on return.
+            Without the prepended "+", patterns always succeed even if they match
+            no actual names.  Note that the '+' prefix has no meaning and is ignored
+            for exclusion patterns.
+        Return
+        ------
+        A tuple with the first element containing zero or matched names, and the
+        second element being a boolean indicating whether the "+" requirement of
+        one or more matches succeeded.  If there was no prepended "+" in the
+        pattern then this value is always True.
+        """
+        required = pattern.startswith("+")
+        pattern = re.sub(r"^[+]", "", pattern)
+        matches = [n for n in name_list if fnmatch.fnmatchcase(n, pattern)]
+        requirement_met = (not required) or bool(matches)
+        return matches, requirement_met
+
+
+    def filter_object_list(
+        self,
+        object_list: List[str],
+        include: Union[str, None],
+        exclude: Union[str, None]
+    ) -> List[str]:
         """
         Return a filtered list of policies given a comma-separated include list and
         a comma-separated exclude list.
@@ -305,18 +383,17 @@ class BackupManager(object):
             form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
             items that don't have a subtype use tuples of the form "connectionInfo:dev*".
         """
-        all_objects = self.list_onefuse_objects()
         include = include.strip() if include else ""
         missing = []
         included = []
         excluded = []
         if include.lower() in ["", "*", "all"]:
-            included = all_objects.copy()
+            included = object_list.copy()
         else:
             globs = [glob.strip() for glob in include.split(",") if glob.strip()]
             for glob in globs:
-                (incs, found) = self.match_object_name(all_objects, glob)
-                if not found:
+                (incs, reqmet) = self.match_object_pattern(object_list, glob)
+                if not reqmet:
                     missing.append(glob)
                 else:
                     included.extend(incs)
@@ -325,15 +402,282 @@ class BackupManager(object):
         if exclude.lower() not in ["", "none"]:
             globs = [glob.strip() for glob in exclude.split(",") if glob.strip()]
             for glob in globs:
-                (excs, _) = self.match_object_name(all_objects, glob)
+                (excs, _) = self.match_object_pattern(object_list, glob)
                 excluded.extend(excs)
-                # Omit "missing" non-globbed names if they match an exclude.
-                (miss, _) = self.match_object_name(missing, glob)
-                excluded.extend(miss)
         exclude_set = set(excluded)
         result_set = include_set - exclude_set
-        missing_set = set(missing) - exclude_set
+        missing_set = set(missing)
         return sorted(result_set), sorted(missing_set)
+
+
+    def filter_import_objects(
+        self,
+        directory: str,
+        include: Union[str, None],
+        exclude: Union[str, None]
+    ) -> List[str]:
+        """
+        Return a filtered list of policies given a comma-separated include list and
+        a comma-separated exclude list.
+
+        Note that the final list of objects is the set of included objects, minus
+        any objects in the exclude set.
+
+        Parameters
+        ----------
+        include: str or None
+            The set of objects to include in the export.  If this parameter is blank, not
+            specified, is "ALL", or is "*", then all objects are included.  Otherwise
+            specify a comma-separated list of colon-separated tuples or triples that can
+            use file-like '*' and '?' wildcard globbing.  Objects like IPAM profiles
+            that have a subtype (e.g. "infoblox", "bluecat") use a triple of the
+            form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
+            items that don't have a subtype use tuples of the form "connectionInfo:dev*".
+        exclude: str or None
+            The set of objects to from from the export.  If this parameter is blank, not
+            specified, or is "NONE", then no objects are excluded.  Otherwise
+            specify a comma-separated list of colon-separated tuples or triples that can
+            use file-like '*' and '?' wildcard globbing.  Objects like IPAM profiles
+            that have a subtype (e.g. "infoblox", "bluecat") use a triple of the
+            form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
+            items that don't have a subtype use tuples of the form "connectionInfo:dev*".
+        """
+        object_list = self.list_exported_objects(directory)
+        (result, missing) = self.filter_object_list(object_list, include, exclude)
+        return result, missing
+
+
+    def filter_export_objects(
+        self,
+        include: Union[str, None],
+        exclude: Union[str, None]
+    ) -> List[str]:
+        """
+        Return a filtered list of policies given a comma-separated include list and
+        a comma-separated exclude list.
+
+        Note that the final list of objects is the set of included objects, minus
+        any objects in the exclude set.
+
+        Parameters
+        ----------
+        include: str or None
+            The set of objects to include in the export.  If this parameter is blank, not
+            specified, is "ALL", or is "*", then all objects are included.  Otherwise
+            specify a comma-separated list of colon-separated tuples or triples that can
+            use file-like '*' and '?' wildcard globbing.  Objects like IPAM profiles
+            that have a subtype (e.g. "infoblox", "bluecat") use a triple of the
+            form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
+            items that don't have a subtype use tuples of the form "connectionInfo:dev*".
+        exclude: str or None
+            The set of objects to from from the export.  If this parameter is blank, not
+            specified, or is "NONE", then no objects are excluded.  Otherwise
+            specify a comma-separated list of colon-separated tuples or triples that can
+            use file-like '*' and '?' wildcard globbing.  Objects like IPAM profiles
+            that have a subtype (e.g. "infoblox", "bluecat") use a triple of the
+            form "ipamProfiles:bluecat:prod_*".  Objects like Connection Info
+            items that don't have a subtype use tuples of the form "connectionInfo:dev*".
+        """
+        object_list = self.list_onefuse_objects()
+        (result, missing) = self.filter_object_list(object_list, include, exclude)
+        return result, missing
+
+    def parse_object_spec(self, spec: str) -> Tuple[Union[str, None], Union[str, None], Union[str, None]]:
+        """
+        Split an object spec of the form "type:name" or "type:subtype:name" into
+        its separate components.
+
+        Parameters
+        ----------
+        spec: str
+            A OneFuse object spec in the form "type:name" or "type:subtype:name".
+
+        Return
+        ------
+        A 3-tuple giving the type, subtype (may be None), and name of the object.
+        If the type or name are None, then the spec was malformed.
+        """
+        comps = spec.split(":")
+        if len(comps) == 2:
+            return (comps[0], None, comps[1])
+        if len(comps) == 3:
+            return (comps[0], comps[1], comps[2])
+        return (None, None, None)
+
+
+    def generate_object_relative_json_path(self, spec: str) -> Union[str, None]:
+        """
+        Given an object spec of the form "type:name" or "type:subtype:name", generate
+        the relative directory path where the exported json file should go.
+
+        Parameters
+        ----------
+        spec: str
+            A OneFuse object spec in the form "type:name" or "type:subtype:name".
+
+        Return
+        ------
+        The relative path where the exported json file is found.
+
+        """
+        (object_type, object_subtype, object_name) = self.parse_object_spec(spec)
+        if object_type and object_name:
+            if object_subtype:
+                return f"{object_type}/{object_subtype}_{object_name}.json"
+            else:
+                return f"{object_type}/{object_name}.json"
+        else:
+            return None
+
+
+    def import_onefuse_objects(
+        self,
+        directory: str,
+        include: Union[str, None] = "ALL",
+        exclude: Union[str, None] = "NONE",
+        continue_on_error: Union[bool, None] = False,
+        overwrite: Union[bool, None] = False,
+    ) -> List[str]:
+        """
+        Import a set of objects to OneFuse, as specified by an "include" and an
+        "exclude" filter.  Each filter is a comma-separated list of glob speifications
+        that should match the desired set of objects to import, and not to import,
+        respectively.  The exclude filter is applied after the include filter and
+        removes included objects.  Objects will be imported from the directory
+        tree given by 'directory'.  The directory must be in the "standard" structure
+        as created by an export operation.
+
+        Parameters
+        ----------
+        directory: str
+            The top level directory where imported json files are to be found.
+        include: str - optional
+            A comma-separated list of "glob" style filters indicating which objects
+            are to be included in the import.  For example "ipamProfiles:*:prod_*".
+            The normal '*', '?', and '[charsset]' wildcards are supported.  In
+            addition, if '+' is prepended to one of the filters, it indicates that
+            at least one stored object json file MUST match the filter or an error
+            occurs.  The default if blank , "ALL", or None is to include ALL objects.
+        exclude: str - optional
+            A comma-separated list of "glob" style filters indicating which objects
+            are to be excluded from the import.  For example "ipamProfiles:*:prod_*".
+            The normal '*', '?', and '[charsset]' wildcards are supported.  The
+            '+' prefix, if present, is ignored since it has no meaning for "exclude".
+            The default if blank , "NONE", or None is to exclude NO objects.
+        continue_on_error: bool - optional (default: false)
+            If true, then the import request will attempt to continue importing
+            objects even if an error occurs.  Errors will still be logged to
+            the logger as errors.
+        overwrite: bool - optional (default: false)
+            If true, then imported policies will overwrite existing ones in OneFuse.
+
+        Return
+        ------
+        A list of object specs for all objects successfully imported.
+        """
+        imported_objects = []
+        (object_list, missing_list) = self.filter_import_objects(directory, include, exclude)
+        if missing_list:
+            msg = f"One or more REQUIRED (+) filters matched no objects: {str(missing_list)}"
+            self.ofm.logger.error(msg)
+            if not continue_on_error:
+                raise BackupContentError(msg)
+        self.ofm.logger.info("Importing OneFuse Objects.")
+        self.ofm.logger.info(f"Import Include Filter(s): {str(include)}")
+        self.ofm.logger.info(f"Import Exclude Filter(s): {str(exclude)}")
+        self.ofm.logger.debug(f"Objects to import: {str(object_list)}")
+        for object_spec in object_list:
+            json_file = self.generate_object_relative_json_path(object_spec)
+            if json_file:
+                json_path = Path(directory) / json_file
+                try:
+                    self.restore_single_policy(str(json_path), overwrite)
+                    imported_objects.append(object_spec)
+                except Exception as exc:
+                    msg = f"Failed to import object '{object_spec}': {str(exc)}"
+                    self.ofm.logger.error(msg)
+                    if not continue_on_error:
+                        raise
+            else:
+                msg = f"Malformed object spec: '{object_spec}'"
+                self.ofm.logger.error(msg)
+                if not continue_on_error:
+                    raise BackupContentError(msg)
+        return imported_objects
+
+
+    def export_onefuse_objects(
+        self,
+        directory: str,
+        include: Union[str, None] = "ALL",
+        exclude: Union[str, None] = "NONE",
+        continue_on_error: Union[bool, None] = False,
+    ) -> List[str]:
+        """
+        Export a set of objects from OneFuse, as specified by an "include" and an
+        "exclude" filter.  Each filter is a comma-separated list of glob speifications
+        that should match the desired set of objects to export, and not to export,
+        respectively.  The exclude filter is applied after the include filter and
+        removes included objects.
+
+        Parameters
+        ----------
+        directory: str
+            The top level directory where exported json files are to be stored.
+        include: str - optional
+            A comma-separated list of "glob" style filters indicating which objects
+            are to be included in the export.  For example "ipamProfiles:*:prod_*".
+            The normal '*', '?', and '[charsset]' wildcards are supported.  In
+            addition, if '+' is prepended to one of the filters, it indicates that
+            at least one OneFuse object MUST match the filter or an error occurs.
+            The default if blank , "ALL", or None is to include ALL objects.
+        exclude: str - optional
+            A comma-separated list of "glob" style filters indicating which objects
+            are to be excluded from the export.  For example "ipamProfiles:*:prod_*".
+            The normal '*', '?', and '[charsset]' wildcards are supported.  The
+            '+' prefix, if present, is ignored since it has no meaning for "exclude".
+            The default if blank , "NONE", or None is to exclude NO objects.
+        continue_on_error: bool - optional
+            If true, then the export request will attempt to continue exporting
+            objects even if an error occurs.  Errors will still be logged to
+            the logger as errors.
+
+        Return
+        ------
+        A list of object specs for all objects successfully exported.
+        """
+        exported_objects = []
+        (object_list, missing_list) = self.filter_export_objects(include, exclude)
+        if missing_list:
+            msg = f"One or more REQUIRED (+) filters matched no objects: {str(missing_list)}"
+            self.ofm.logger.error(msg)
+            if not continue_on_error:
+                raise BackupContentError(msg)
+        self.ofm.logger.info("Exporting OneFuse Objects.")
+        self.ofm.logger.info(f"Export Include Filter(s): {str(include)}")
+        self.ofm.logger.info(f"Export Exclude Filter(s): {str(exclude)}")
+        self.ofm.logger.debug(f"Objects to export: {str(object_list)}")
+        for object_spec in object_list:
+            (object_type, _, object_name) = self.parse_object_spec(object_spec)
+            if object_type and object_name:
+                try:
+                    self.backup_single_policy(
+                        backups_path=directory,
+                        policy_type=object_type,
+                        policy_name=object_name,
+                    )
+                    exported_objects.append(object_spec)
+                except Exception as exc:
+                    msg = f"Failed to back up object '{object_spec}': {str(exc)}"
+                    self.ofm.logger.error(msg)
+                    if not continue_on_error:
+                        raise
+            else:
+                msg = f"Malformed object spec: '{object_spec}'"
+                self.ofm.logger.error(msg)
+                if not continue_on_error:
+                    raise BackupContentError(msg)
+        return exported_objects
 
 
     def backup_policies(self, backups_path: str):
@@ -507,6 +851,7 @@ class BackupManager(object):
             error_string = (f'Link not found. link_type: {link_type}'
                             f'link_name: {link_name}')
             raise OneFuseError(error_string)
+
 
     def restore_policies_from_file_path(self, file_path: str,
                                         overwrite: bool = False,
