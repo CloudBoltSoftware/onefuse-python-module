@@ -966,6 +966,8 @@ class OneFuseManager(object):
             Set). Default: "value"
         """
         try:
+            if type(template) != str:
+                return template
             if template.find('{%') == -1 and template.find('{{') == -1:
                 return template
             json_template = {

@@ -170,6 +170,12 @@ class CbOneFuseManager(OneFuseManager):
                         from infrastructure.models import Environment
                         resource.environment = Environment.objects.filter(
                             name=rendered_value).first()
+                    elif rendered_key == 'cpu_cnt':
+                        resource.cpu_cnt = rendered_value
+                        resource.save()
+                    elif rendered_key == 'mem_size':
+                        resource.mem_size = rendered_value
+                        resource.save()
                     else:
                         try:
                             resource.set_value_for_custom_field(rendered_key,
