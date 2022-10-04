@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from infrastructure.models import CustomField, Server
 
 if __name__ == '__main__':
@@ -171,10 +173,14 @@ class CbOneFuseManager(OneFuseManager):
                         resource.environment = Environment.objects.filter(
                             name=rendered_value).first()
                     elif rendered_key == 'cpu_cnt':
-                        resource.cpu_cnt = rendered_value
+                        self.logger.info(f'Setting cpu_cnt to: '
+                                         f'{rendered_value}')
+                        resource.cpu_cnt = int(rendered_value)
                         resource.save()
                     elif rendered_key == 'mem_size':
-                        resource.mem_size = rendered_value
+                        self.logger.info(f'Setting mem_size to: '
+                                         f'{rendered_value}')
+                        resource.mem_size = Decimal(rendered_value)
                         resource.save()
                     else:
                         try:
@@ -503,11 +509,10 @@ class Utilities(object):
         except Exception:
             pass
         try:
-            hardware_info[index_prop]["memoryMB"] = resource.mem_size * 1024
-        except Exception:
-            pass
-        try:
-            hardware_info[index_prop]["memoryGB"] = resource.mem_size
+            mem_gb = int(resource.mem_size)
+            mem_mb = mem_gb * 1024
+            hardware_info[index_prop]["memoryGB"] = mem_gb
+            hardware_info[index_prop]["memoryMB"] = mem_mb
         except Exception:
             pass
         try:
