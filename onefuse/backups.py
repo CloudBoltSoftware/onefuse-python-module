@@ -495,7 +495,7 @@ class BackupManager(object):
                 detail = response.json()["detail"]
             except:
                 self.ofm.logger.error('Response JSON detail cannot be '
-                                      'accessed', response=response)
+                                      f'accessed. response: {response}')
                 raise
             if detail == 'Not found.':
                 # This may happen when script is run against older
