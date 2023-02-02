@@ -592,6 +592,34 @@ class Utilities(object):
         self.logger.debug(f'Returning matching_properties: '
                           f'{matching_properties}')
         return matching_properties
+    
+    def get_key_value_objects(self, prefix, properties_stack):
+        """
+        From a dict, return a list of key-value objects,
+        that match the input prefix
+
+        Parameters
+        ----------
+        prefix: str
+            Prefix to search for. Ex: OneFuse_NamingPolicy_
+        properties_stack: dict
+            A dict containing all properties from the CB resource
+        """
+        key_value_objects = []
+        pattern = re.compile(prefix)
+        for key in properties_stack.keys():
+            result = pattern.match(key)
+            if result is not None:
+                suffix = key[len(prefix):]
+                key_value_object = {
+                                    "key": key,
+                                    "value": properties_stack[key],
+                                    "suffix": suffix
+                                    }
+                key_value_objects.append(key_value_object)
+        self.logger.debug(f'Returning key_value_objects: '
+                          f'{key_value_objects}')
+        return key_value_objects
 
     def delete_output_job_results(self, managed_object, run_type):
         """
