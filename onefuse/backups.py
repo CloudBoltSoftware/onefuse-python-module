@@ -214,7 +214,7 @@ class BackupManager(object):
         else:
             return False
 
-    def backup_policies(self, backups_path: str, type: str = None):
+    def backup_policies(self, backups_path: str):
         """
         Back up all OneFuse policies from the OneFuse instance used when
         instantiating the OneFuseBackups class
@@ -225,19 +225,9 @@ class BackupManager(object):
             Path to back the files up to. Examples:
                 Windows: 'C:\\temp\\onefuse_backups\\'
                 Linux: '/tmp/onefuse_backups/'
-        type: str
         """
         # Gather policies from OneFuse, store them under BACKUPS_PATH
-        policy_types = self.policy_types
-        if type:
-            if type in policy_types:
-                policy_types = [type]
-            else:
-                error_string = (
-                    f'Policy type not found. Type {type} should be one of {policy_types}'
-                )
-                raise OneFuseError(error_string)
-        for policy_type in policy_types:
+        for policy_type in self.policy_types:
             self.ofm.logger.info(f'Backing up policy_type: {policy_type}')
             response = self.ofm.get(f'/{policy_type}/')
             next_exists = self.create_json_files(response, policy_type,
