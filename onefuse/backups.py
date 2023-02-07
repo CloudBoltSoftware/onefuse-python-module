@@ -226,6 +226,8 @@ class BackupManager(object):
                 Windows: 'C:\\temp\\onefuse_backups\\'
                 Linux: '/tmp/onefuse_backups/'
         type: str
+            Optional type. Will backup all "policies" of the given type
+            or raise an error if the parameter passed is not valid.
         """
         # Gather policies from OneFuse, store them under BACKUPS_PATH
         policy_types = self.policy_types
