@@ -236,10 +236,10 @@ class BackupManager(object):
                 policy_types = [type]
             else:
                 error_string = (
-                    f'Policy type not found. Type {type} should be one of {policy_types}'
+                    f"Type not found. Type '{type}' should be oe of {policy_types}"
                 )
                 raise OneFuseError(error_string)
-        for policy_type in policy_types:
+        for policy_type in self.policy_types:
             self.ofm.logger.info(f'Backing up policy_type: {policy_type}')
             response = self.ofm.get(f'/{policy_type}/')
             next_exists = self.create_json_files(response, policy_type,
