@@ -64,7 +64,7 @@ class CbOneFuseManager(OneFuseManager):
         try:
             conn_info = ConnectionInfo.objects.get(
                 name__iexact=conn_info_name,
-                labels__name='onefuse'
+                labels__name__iexact='onefuse'
             )
         except:
             err_str = (f'ConnectionInfo could not be found with name: '
