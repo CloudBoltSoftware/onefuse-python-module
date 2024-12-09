@@ -306,6 +306,17 @@ class OneFuseManager(object):
         }
         path = "/ansibleTowerDeployments/"
         response_json = self.request(path, template, tracking_id)
+        if response_json and "provisioningJobResults" in response_json:
+            job_results = response_json["provisioningJobResults"]
+            if job_results:
+                last_job_result = job_results[-1]
+                playbook_name = last_job_result.get("jobTemplatePlaybookName", "Unknown Playbook")
+                jobtemplate_name = last_job_result.get("jobTemplateName", "Unknown JobTemplate")
+                self.logger.info(f"The last jobtemplate/playbook executed in Ansible through OneFuse: {playbook_name}/{jobtemplate_name}")
+            else:
+                self.logger.warning("No provisioning job results found in the response.")
+        else:
+            self.logger.error("Invalid response or missing 'provisioningJobResults'.")
         return response_json
 
     def deprovision_ansible_tower(self, at_id: int):
