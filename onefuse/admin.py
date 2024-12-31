@@ -746,13 +746,19 @@ class OneFuseManager(object):
         {
             "root_prop":"root_value"
             "OneFuse_CreateProperties_Test": {
-                "key": "name_app",
+                "key": "name_app1",
                 "value": "apache"
-            }
+            },
+            "OneFuse_CreateProperties_Apps": [
+                {"key": "name_app2", "value": "nginx"},
+                {"key": "name_app3", "value": "mysql"}
+            ]
         }
         The above JSON when passed in to this function would return:
         {
-            "name_app": "apache"
+            "name_app1": "apache",
+            "name_app2": "nginx",
+            "name_app3": "mysql"
         }
 
         Parameters
@@ -765,13 +771,19 @@ class OneFuseManager(object):
         for key in template_properties.keys():
             result = pattern.match(key)
             if result is not None:
-                self.logger.debug(f'Starting JSON parse of key: {key}, '
-                                  f'value: {template_properties[key]}')
+                self.logger.debug(f'Starting parse of key: {key}, '
+                                f'value: {template_properties[key]}')
                 value_obj = template_properties[key]
                 self.logger.debug(f'Create Props Object: {value_obj}')
-                if type(value_obj) == str:
+
+                if isinstance(value_obj, str):
                     value_obj = json.loads(value_obj)
-                if value_obj["key"] and value_obj["value"]:
+
+                if isinstance(value_obj, list):
+                    for item in value_obj:
+                        if isinstance(item, dict) and "key" in item and "value" in item:
+                            create_properties[item["key"]] = item["value"]
+                elif isinstance(value_obj, dict) and "key" in value_obj and "value" in value_obj:
                     create_properties[value_obj["key"]] = value_obj["value"]
         return create_properties
 
