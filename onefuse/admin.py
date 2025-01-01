@@ -740,7 +740,7 @@ class OneFuseManager(object):
         """
         Parse a dict to find any properties prepended with
         OneFuse_CreateProperties_. If found, extract the key:value out of the
-        property and return them as a dict.
+        property and return them as a dict. Supports both single objects and arrays of objects.
 
         Ex:
         {
@@ -769,6 +769,7 @@ class OneFuseManager(object):
         create_properties = {}
         pattern = re.compile('OneFuse_CreateProperties_')
         for key in template_properties.keys():
+            # Match the key against a defined pattern
             result = pattern.match(key)
             if result is not None:
                 self.logger.debug(f'Starting parse of key: {key}, '
@@ -776,14 +777,20 @@ class OneFuseManager(object):
                 value_obj = template_properties[key]
                 self.logger.debug(f'Create Props Object: {value_obj}')
 
+                # If the value_obj is a string, parse JSON.
                 if isinstance(value_obj, str):
                     value_obj = json.loads(value_obj)
 
+                # If the value_obj is a list (array of key/value pairs).
                 if isinstance(value_obj, list):
                     for item in value_obj:
+                        # If the item is a dictionary containing both 'key' and 'value'
                         if isinstance(item, dict) and "key" in item and "value" in item:
+                            # Add the 'key' and 'value' from the item to the create_properties dictionary
                             create_properties[item["key"]] = item["value"]
+                # If the value_obj is a single key/value pair containing both 'key' and 'value'
                 elif isinstance(value_obj, dict) and "key" in value_obj and "value" in value_obj:
+                    # Add the 'key' and 'value' from the dictionary to the create_properties dictionary
                     create_properties[value_obj["key"]] = value_obj["value"]
         return create_properties
 
