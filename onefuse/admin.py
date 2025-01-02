@@ -740,19 +740,25 @@ class OneFuseManager(object):
         """
         Parse a dict to find any properties prepended with
         OneFuse_CreateProperties_. If found, extract the key:value out of the
-        property and return them as a dict.
+        property and return them as a dict. Supports both single objects and arrays of objects.
 
         Ex:
         {
             "root_prop":"root_value"
             "OneFuse_CreateProperties_Test": {
-                "key": "name_app",
+                "key": "name_app1",
                 "value": "apache"
-            }
+            },
+            "OneFuse_CreateProperties_Apps": [
+                {"key": "name_app2", "value": "nginx"},
+                {"key": "name_app3", "value": "mysql"}
+            ]
         }
         The above JSON when passed in to this function would return:
         {
-            "name_app": "apache"
+            "name_app1": "apache",
+            "name_app2": "nginx",
+            "name_app3": "mysql"
         }
 
         Parameters
@@ -763,15 +769,28 @@ class OneFuseManager(object):
         create_properties = {}
         pattern = re.compile('OneFuse_CreateProperties_')
         for key in template_properties.keys():
+            # Match the key against a defined pattern
             result = pattern.match(key)
             if result is not None:
-                self.logger.debug(f'Starting JSON parse of key: {key}, '
-                                  f'value: {template_properties[key]}')
+                self.logger.debug(f'Starting parse of key: {key}, '
+                                f'value: {template_properties[key]}')
                 value_obj = template_properties[key]
                 self.logger.debug(f'Create Props Object: {value_obj}')
-                if type(value_obj) == str:
+
+                # If the value_obj is a string, parse JSON.
+                if isinstance(value_obj, str):
                     value_obj = json.loads(value_obj)
-                if value_obj["key"] and value_obj["value"]:
+
+                # If the value_obj is a list (array of key/value pairs).
+                if isinstance(value_obj, list):
+                    for item in value_obj:
+                        # If the item is a dictionary containing both 'key' and 'value'
+                        if isinstance(item, dict) and "key" in item and "value" in item:
+                            # Add the 'key' and 'value' from the item to the create_properties dictionary
+                            create_properties[item["key"]] = item["value"]
+                # If the value_obj is a single key/value pair containing both 'key' and 'value'
+                elif isinstance(value_obj, dict) and "key" in value_obj and "value" in value_obj:
+                    # Add the 'key' and 'value' from the dictionary to the create_properties dictionary
                     create_properties[value_obj["key"]] = value_obj["value"]
         return create_properties
 
