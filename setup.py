@@ -1,62 +1,63 @@
-import sys
+import os
+import shutil
 import subprocess
 import logging
 
-
+# Set up logging configuration
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger()
+log = logging.getLogger(__name__)
 
-
-def get_setuptools_version():
+def get_setuptools_location():
     try:
-        # Run pip show setuptools and capture the output
+        # Get the location of setuptools.
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "show", "setuptools"],
-            capture_output=True,
-            text=True,
-            check=True,
+            ['pip', 'show', 'setuptools'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True
         )
 
-        # Extract the version from the output
+        # If pip show failedd.
+        if result.returncode != 0:
+            log.error("Error: pip show setuptools failed.")
+            return None
+
+        # Extract the location of setuptools.
+        location = None
         for line in result.stdout.splitlines():
-            if line.startswith("Version:"):
-                version = line.split(":")[1].strip()
-                return version
+            if line.startswith('Location:'):
+                location = line.split(':')[1].strip()
+
+        if not location:
+            log.error("Error: Could not extract location of setuptools.")
+            return None
+
+        return location
+
+    except Exception as e:
+        log.error(f"Error extracting setuptools location: {e}")
         return None
-    except subprocess.CalledProcessError:
-        return None
 
 
-def ensure_setuptools():
-    setuptools_version = get_setuptools_version()
+target_directory = get_setuptools_location()
 
-    if setuptools_version == "75.6.0":
-        log.info(
-            f"setuptools version {setuptools_version} detected. Reinstalling it to resolve the dependecies"
-        )
+if target_directory:
+    # Construct the full path for the build.py.
+    build_file_path = os.path.join(target_directory, 'setuptools/command', 'build.py')
 
-        # Run pip install --force-reinstall for version 75.6.0
-        subprocess.check_call(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "install",
-                "--force-reinstall",
-                "setuptools==75.6.0",
-            ]
-        )
-        log.info("setuptools 75.6.0 reinstalled successfully.")
-    elif setuptools_version:
-        log.info(f"setuptools version {setuptools_version} is up-to-date.")
-    else:
-        log.info("setuptools not found. Installing version 75.6.0...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "setuptools==75.6.0"]
-        )
+    try:
+        # Check if the build.py file already exists at the target location
+        if not os.path.exists(build_file_path):
+            shutil.copy('build.py', build_file_path)
+            print(f"build.py has been copied to {build_file_path}")
+        else:
+            print(f"build.py already exists at {build_file_path}, skipping creation.")
+    except FileNotFoundError as e:
+        print(f"Error: The file 'build.py' was not found in the current directory. {e}")
+    except Exception as e:
+        print(f"An error occurred while copying the file: {e}")
 
-
-ensure_setuptools()
+else:
+    print("Could not determine teh setuptools location. Skipping build.py creation.")
 
 from setuptools import setup
 
