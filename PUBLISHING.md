@@ -136,7 +136,7 @@ python -c "import onefuse; print(onefuse.__version__)"
 
 ---
 
-## 4. Build and Publish to PyPI
+## 5. Build and Publish to PyPI
 
 Only proceed here after successfully verifying the package on TestPyPI.
 
@@ -191,4 +191,4 @@ python -c "import onefuse; print(onefuse.__version__)"
 
 ---
 
-> **Note:** PyPI does not allow re-uploading the same version. If a release needs to be corrected after uploading, bump the version in `pyproject.toml` and `onefuse/__init__.py` before building and uploading again.
+> **Note:** PyPI does not allow re-uploading the same version. If a release needs to be corrected after uploading, return to **Section 3** to bump the version before building and uploading again.
